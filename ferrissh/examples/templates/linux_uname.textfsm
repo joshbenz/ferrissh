@@ -1,0 +1,9 @@
+Value Kernel (\S+)
+Value Hostname (\S+)
+Value KernelRelease (\S+)
+Value KernelVersion (#\d+.+?[+-]\d{4})
+Value Machine (x86_64|aarch64|armv7l|i686|arm64|ppc64le|s390x)
+Value OS (\S+)
+
+Start
+  ^${Kernel}\s+${Hostname}\s+${KernelRelease}\s+${KernelVersion}\s+${Machine}\s+${OS} -> Record

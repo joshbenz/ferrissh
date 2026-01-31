@@ -1,0 +1,10 @@
+Value Filesystem (\S+)
+Value Size (\S+)
+Value Used (\S+)
+Value Available (\S+)
+Value UsePercent (\d+)
+Value MountedOn (\S+)
+
+Start
+  ^Filesystem -> Continue
+  ^${Filesystem}\s+${Size}\s+${Used}\s+${Available}\s+${UsePercent}%\s+${MountedOn} -> Record

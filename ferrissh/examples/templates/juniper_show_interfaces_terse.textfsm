@@ -1,0 +1,12 @@
+Value Interface (\S+)
+Value AdminStatus (up|down)
+Value LinkStatus (up|down)
+Value Proto (\S+)
+Value Local (\S+)
+Value Remote (\S+)
+
+Start
+  ^Interface\s+Admin\s+Link -> Continue
+  ^${Interface}\s+${AdminStatus}\s+${LinkStatus}\s*$$ -> Record
+  ^${Interface}\s+${AdminStatus}\s+${LinkStatus}\s+${Proto}\s+${Local}\s*$$ -> Record
+  ^${Interface}\s+${AdminStatus}\s+${LinkStatus}\s+${Proto}\s+${Local}\s+-->\s+${Remote} -> Record

@@ -1,0 +1,15 @@
+Value User (\S+)
+Value PID (\d+)
+Value CPU ([\d.]+)
+Value MEM ([\d.]+)
+Value VSZ (\d+)
+Value RSS (\d+)
+Value TTY (\S+)
+Value Stat (\S+)
+Value Start (\S+)
+Value Time (\S+)
+Value Command (.+)
+
+Start
+  ^USER -> Continue
+  ^${User}\s+${PID}\s+${CPU}\s+${MEM}\s+${VSZ}\s+${RSS}\s+${TTY}\s+${Stat}\s+${Start}\s+${Time}\s+${Command} -> Record

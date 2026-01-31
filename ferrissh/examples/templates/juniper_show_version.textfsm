@@ -1,0 +1,10 @@
+Value Hostname (\S+)
+Value Model (\S+)
+Value JunosVersion ([\d.A-Z-]+)
+Value Required Filldown Kernel (.+)
+
+Start
+  ^Hostname:\s+${Hostname}
+  ^Model:\s+${Model}
+  ^Junos:\s+${JunosVersion}
+  ^JUNOS\s+${Kernel} -> Record

@@ -223,6 +223,46 @@ pub struct Response {
 }
 ```
 
+## Parsing Output with TextFSM
+
+For structured data extraction from CLI output, ferrissh works well with [textfsm-rust](https://crates.io/crates/textfsm-rust) - a Rust implementation of Google's TextFSM.
+
+```rust
+use ferrissh::{Driver, DriverBuilder};
+use textfsm_rust::Template;
+
+// Define a TextFSM template for parsing `df -h` output
+const DF_TEMPLATE: &str = r#"
+Value Filesystem (\S+)
+Value Size (\S+)
+Value Used (\S+)
+Value Available (\S+)
+Value UsePercent (\d+)
+Value MountedOn (\S+)
+
+Start
+  ^Filesystem -> Continue
+  ^${Filesystem}\s+${Size}\s+${Used}\s+${Available}\s+${UsePercent}%\s+${MountedOn} -> Record
+"#;
+
+// Run command and parse output
+let response = driver.send_command("df -h").await?;
+let template = Template::parse_str(DF_TEMPLATE)?;
+let mut parser = template.parser();
+let records = parser.parse_text_to_dicts(&response.result)?;
+
+// Access structured data
+for record in records {
+    if let Some(pct) = record.get("usepercent") {
+        if pct.parse::<u32>().unwrap_or(0) > 80 {
+            println!("Warning: {} is {}% full",
+                record.get("mountedon").unwrap_or(&String::new()), pct);
+        }
+    }
+}
+```
+
+See the [textfsm_parsing example](ferrissh/examples/textfsm_parsing.rs) for a complete demonstration with templates for Linux and Juniper commands.
 
 ## Adding Custom Platforms
 
@@ -255,25 +295,95 @@ let driver = DriverBuilder::new("device.example.com")
     .await?;
 ```
 
-## Examples
+## Running the Examples
 
-Run the included examples:
+The `ferrissh/examples/` directory contains several examples demonstrating different features. All examples support both password and SSH key authentication.
+
+### Common Options
+
+| Option | Description |
+|--------|-------------|
+| `--host <HOST>` | Target hostname or IP (default: localhost) |
+| `--port <PORT>` | SSH port (default: 22) |
+| `--user <USER>` | Username (default: $USER) |
+| `--password <PASS>` | Password authentication |
+| `--key <PATH>` | Path to SSH private key |
+| `--timeout <SECS>` | Connection timeout (default: 30) |
+| `--help` | Show help message |
+
+### basic_ls - Linux Commands
+
+Basic example connecting to a Linux host and running commands.
 
 ```bash
-# Linux example
-cargo run --example basic_ls -- --host localhost --user admin --password secret
+# With password
+cargo run --example basic_ls -- --host 192.168.1.10 --user admin --password secret
 
-# Juniper example
+# With SSH key
+cargo run --example basic_ls -- --host myserver --user admin --key ~/.ssh/id_ed25519
+```
+
+### juniper - Juniper JUNOS
+
+Demonstrates connecting to Juniper devices and running operational/configuration commands.
+
+```bash
+# Basic operational commands
 cargo run --example juniper -- --host router1 --user admin --password secret
 
-# Interactive commands example
-cargo run --example interactive -- --host localhost --user admin --password secret
+# Include configuration mode demo
+cargo run --example juniper -- --host router1 --user admin --key ~/.ssh/id_rsa --show-config
+```
 
-# With debug logging
+### interactive - Interactive Commands
+
+Shows how to handle commands that require user input or confirmation prompts.
+
+```bash
+cargo run --example interactive -- --host localhost --user admin --password secret
+```
+
+### textfsm_parsing - Structured Output Parsing
+
+Demonstrates using [textfsm-rust](https://crates.io/crates/textfsm-rust) to parse CLI output into structured data. Includes templates for common Linux and Juniper commands.
+
+```bash
+# Parse Linux commands (uname, df, ps)
+cargo run --example textfsm_parsing -- \
+    --host localhost --user admin --key ~/.ssh/id_ed25519 --platform linux
+
+# Parse Juniper commands (show version, show interfaces terse)
+cargo run --example textfsm_parsing -- \
+    --host router1 --user admin --password secret --platform juniper
+```
+
+**Sample output:**
+```
+--- Parsed Data (TextFSM) ---
+[
+  {
+    "filesystem": "/dev/nvme1n1p4",
+    "size": "853G",
+    "used": "278G",
+    "available": "532G",
+    "usepercent": "35",
+    "mountedon": "/"
+  }
+]
+
+Filesystems with >50% usage:
+  /sys/firmware/efi/efivars - 52% used (64K of 128K)
+```
+
+### Debug Logging
+
+Enable debug logging to see detailed SSH and parsing information:
+
+```bash
 RUST_LOG=debug cargo run --example basic_ls -- --host localhost --user admin --key ~/.ssh/id_rsa
 ```
 
-
+Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
 ## Dependencies
 
