@@ -38,7 +38,17 @@ impl PlatformRegistry {
     /// Register built-in platforms.
     fn register_builtin_platforms(&mut self) {
         // Register Linux platform
-        self.platforms.insert("linux".to_string(), vendors::linux::platform());
+        self.platforms
+            .insert("linux".to_string(), vendors::linux::platform());
+
+        // Register Juniper JUNOS platform
+        self.platforms.insert(
+            "juniper_junos".to_string(),
+            vendors::juniper::platform(),
+        );
+        // Also register as "juniper" for convenience
+        self.platforms
+            .insert("juniper".to_string(), vendors::juniper::platform());
     }
 
     /// Register a platform definition.
