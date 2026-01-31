@@ -5,11 +5,13 @@
 
 mod builder;
 mod generic;
+mod interactive;
 mod privilege;
 mod response;
 
 pub use builder::DriverBuilder;
 pub use generic::GenericDriver;
+pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, InteractiveStep};
 pub use privilege::PrivilegeManager;
 pub use response::Response;
 
@@ -32,9 +34,57 @@ pub trait Driver: Send + Sync {
     /// Send multiple commands sequentially.
     async fn send_commands(&mut self, commands: &[&str]) -> Result<Vec<Response>>;
 
+    /// Send an interactive command sequence.
+    ///
+    /// This handles commands that require additional input or confirmation,
+    /// such as `reload`, `copy`, or `delete` commands.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ferrissh::driver::{Driver, InteractiveEvent};
+    ///
+    /// # async fn example(driver: &mut impl Driver) -> Result<(), ferrissh::Error> {
+    /// // Handle a reload command
+    /// let events = vec![
+    ///     InteractiveEvent::new("reload", r"Proceed.*\[confirm\]"),
+    ///     InteractiveEvent::new("y", r"#"),
+    /// ];
+    /// let result = driver.send_interactive(events).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    async fn send_interactive(&mut self, events: Vec<InteractiveEvent>) -> Result<InteractiveResult>;
+
+    /// Send commands in configuration mode.
+    ///
+    /// This method:
+    /// 1. Acquires the configuration privilege level
+    /// 2. Sends all the provided commands
+    /// 3. Returns to the previous privilege level
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ferrissh::driver::Driver;
+    ///
+    /// # async fn example(driver: &mut impl Driver) -> Result<(), ferrissh::Error> {
+    /// let responses = driver.send_config(&[
+    ///     "interface GigabitEthernet0/1",
+    ///     "description Uplink to Core",
+    ///     "no shutdown",
+    /// ]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    async fn send_config(&mut self, commands: &[&str]) -> Result<Vec<Response>>;
+
     /// Acquire a specific privilege level.
     async fn acquire_privilege(&mut self, privilege: &str) -> Result<()>;
 
     /// Check if the driver is connected.
     fn is_open(&self) -> bool;
+
+    /// Get the current privilege level name.
+    fn current_privilege(&self) -> Option<&str>;
 }

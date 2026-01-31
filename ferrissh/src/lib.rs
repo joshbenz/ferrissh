@@ -44,7 +44,10 @@ pub mod platform;
 pub mod transport;
 
 // Re-export main types for convenience
-pub use driver::{Driver, DriverBuilder, GenericDriver, Response};
+pub use driver::{
+    Driver, DriverBuilder, GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult,
+    Response,
+};
 pub use error::Error;
 pub use platform::{PlatformDefinition, PrivilegeLevel};
 pub use transport::{AuthMethod, SshConfig};

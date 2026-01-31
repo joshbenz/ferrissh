@@ -6,10 +6,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use regex::bytes::Regex;
 
+use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
 use super::Driver;
 use crate::error::{DriverError, Result};
+use log::debug;
 use crate::platform::{DefaultBehavior, PlatformDefinition, VendorBehavior};
 use crate::transport::config::SshConfig;
 use crate::transport::SshTransport;
@@ -324,7 +326,133 @@ impl Driver for GenericDriver {
         Ok(())
     }
 
+    async fn send_interactive(&mut self, events: Vec<InteractiveEvent>) -> Result<InteractiveResult> {
+        let total_start = Instant::now();
+        let mut steps = Vec::with_capacity(events.len());
+
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or(DriverError::NotConnected)?;
+
+        for event in events {
+            let step_start = Instant::now();
+
+            // Log the input (masked if hidden)
+            let log_input = if event.hidden {
+                "********".to_string()
+            } else {
+                event.input.clone()
+            };
+            debug!("send_interactive: sending '{}'", log_input);
+
+            // Send the input
+            transport.send(&event.input).await?;
+
+            // Get timeout for this event
+            let timeout = event.timeout.unwrap_or(self.timeout);
+
+            // Wait for the pattern
+            let data = transport
+                .read_until_pattern(&event.pattern, timeout)
+                .await?;
+
+            let step_elapsed = step_start.elapsed();
+            let raw_output = String::from_utf8_lossy(&data).to_string();
+
+            // Normalize output
+            let output = self.behavior.normalize_output(&raw_output, &event.input);
+
+            // Check for failures
+            let step = if let Some(failure_msg) = self.behavior.detect_failure(&output) {
+                InteractiveStep::failed(
+                    log_input,
+                    output,
+                    raw_output,
+                    step_elapsed,
+                    failure_msg,
+                )
+            } else {
+                // Also check platform's failed_when_contains
+                let mut failed_step = None;
+                for pattern in &self.platform.failed_when_contains {
+                    if output.contains(pattern) {
+                        failed_step = Some(InteractiveStep::failed(
+                            log_input.clone(),
+                            output.clone(),
+                            raw_output.clone(),
+                            step_elapsed,
+                            pattern.clone(),
+                        ));
+                        break;
+                    }
+                }
+                failed_step.unwrap_or_else(|| {
+                    InteractiveStep::success(log_input, output, raw_output, step_elapsed)
+                })
+            };
+
+            steps.push(step);
+        }
+
+        // Update privilege level based on final output
+        if let Some(last_step) = steps.last() {
+            if let Ok(level) = self
+                .privilege_manager
+                .determine_from_prompt(&last_step.raw_output)
+            {
+                let level_name = level.name.clone();
+                let _ = self.privilege_manager.set_current(&level_name);
+            }
+        }
+
+        Ok(InteractiveResult::new(steps, total_start.elapsed()))
+    }
+
+    async fn send_config(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
+        // Save current privilege level
+        let original_privilege = self
+            .privilege_manager
+            .current()
+            .map(|l| l.name.clone());
+
+        // Find the configuration privilege level
+        // Look for a level with "config" in the name, or use platform's default
+        let config_privilege = self
+            .platform
+            .privilege_levels
+            .keys()
+            .find(|name| name.to_lowercase().contains("config"))
+            .cloned();
+
+        if let Some(config_priv) = config_privilege {
+            // Acquire configuration privilege
+            self.acquire_privilege(&config_priv).await?;
+
+            // Send all commands
+            let responses = self.send_commands(commands).await?;
+
+            // Return to original privilege if we had one
+            if let Some(original) = original_privilege {
+                if original != config_priv {
+                    self.acquire_privilege(&original).await?;
+                }
+            }
+
+            Ok(responses)
+        } else {
+            // No config privilege defined, just send commands as-is
+            self.send_commands(commands).await
+        }
+    }
+
     fn is_open(&self) -> bool {
         self.transport.is_some()
+    }
+
+    fn current_privilege(&self) -> Option<&str> {
+        self.privilege_manager
+            .current()
+            .map(|l| l.name.as_str())
     }
 }
