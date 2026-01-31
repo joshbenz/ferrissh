@@ -6,6 +6,8 @@ An async SSH CLI scraper library for network device automation in Rust.
 [![Documentation](https://docs.rs/ferrissh/badge.svg)](https://docs.rs/ferrissh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> **Warning:** This library is experimental and under active development. The API is subject to change without notice. Use in production at your own risk.
+
 Ferrissh provides a high-level async API for interacting with network devices over SSH, similar to Python's [scrapli](https://github.com/carlmontanari/scrapli) and [netmiko](https://github.com/ktbyers/netmiko) libraries.
 
 ## Features
