@@ -1,7 +1,7 @@
 //! TextFSM Parsing Example
 //!
 //! This example demonstrates using ferrissh with textfsm-rust to parse
-//! CLI output into structured data.
+//! CLI output into strongly-typed Rust structs using serde deserialization.
 //!
 //! # Prerequisites
 //!
@@ -20,53 +20,127 @@
 //! cargo run --example textfsm_parsing -- --host router1 --user admin --password secret --platform juniper
 //! ```
 
-use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use ferrissh::{Driver, DriverBuilder};
+use serde::{Deserialize, Serialize};
 use textfsm_rust::Template;
 
-/// Holds a command and its associated TextFSM template
-struct CommandTemplate {
-    command: &'static str,
-    template: &'static str,
-    description: &'static str,
+// =============================================================================
+// Linux Structs
+// =============================================================================
+
+/// Parsed output from `uname -a`
+#[derive(Debug, Deserialize, Serialize)]
+struct UnameInfo {
+    kernel: String,
+    hostname: String,
+    #[serde(rename = "kernelrelease")]
+    kernel_release: String,
+    #[serde(rename = "kernelversion")]
+    kernel_version: String,
+    machine: String,
+    os: String,
 }
 
-/// Linux commands and templates
-const LINUX_COMMANDS: &[CommandTemplate] = &[
-    CommandTemplate {
-        command: "uname -a",
-        template: include_str!("templates/linux_uname.textfsm"),
-        description: "System information",
-    },
-    CommandTemplate {
-        command: "df -h",
-        template: include_str!("templates/linux_df.textfsm"),
-        description: "Disk usage",
-    },
-    CommandTemplate {
-        command: "ps aux | head -20",
-        template: include_str!("templates/linux_ps.textfsm"),
-        description: "Running processes (top 20)",
-    },
-];
+/// Parsed output from `df -h`
+#[derive(Debug, Deserialize, Serialize)]
+struct DiskUsage {
+    filesystem: String,
+    size: String,
+    used: String,
+    available: String,
+    #[serde(rename = "usepercent")]
+    use_percent: String,
+    #[serde(rename = "mountedon")]
+    mounted_on: String,
+}
 
-/// Juniper commands and templates
-const JUNIPER_COMMANDS: &[CommandTemplate] = &[
-    CommandTemplate {
-        command: "show version",
-        template: include_str!("templates/juniper_show_version.textfsm"),
-        description: "System version information",
-    },
-    CommandTemplate {
-        command: "show interfaces terse",
-        template: include_str!("templates/juniper_show_interfaces_terse.textfsm"),
-        description: "Interface status summary",
-    },
-];
+impl DiskUsage {
+    /// Get usage percentage as a number
+    fn use_percent_num(&self) -> Option<u32> {
+        self.use_percent.parse().ok()
+    }
+}
+
+/// Parsed output from `ps aux`
+#[derive(Debug, Deserialize, Serialize)]
+struct ProcessInfo {
+    user: String,
+    pid: String,
+    cpu: String,
+    mem: String,
+    vsz: String,
+    rss: String,
+    tty: String,
+    stat: String,
+    start: String,
+    time: String,
+    command: String,
+}
+
+impl ProcessInfo {
+    /// Get CPU usage as a number
+    fn cpu_percent(&self) -> Option<f32> {
+        self.cpu.parse().ok()
+    }
+
+    /// Get memory usage as a number
+    fn mem_percent(&self) -> Option<f32> {
+        self.mem.parse().ok()
+    }
+}
+
+// =============================================================================
+// Juniper Structs
+// =============================================================================
+
+/// Parsed output from `show version`
+#[derive(Debug, Deserialize, Serialize)]
+struct JuniperVersion {
+    hostname: Option<String>,
+    model: Option<String>,
+    #[serde(rename = "junosversion")]
+    junos_version: Option<String>,
+    kernel: String,
+}
+
+/// Parsed output from `show interfaces terse`
+#[derive(Debug, Deserialize, Serialize)]
+struct JuniperInterface {
+    interface: String,
+    #[serde(rename = "adminstatus")]
+    admin_status: Option<String>,
+    #[serde(rename = "linkstatus")]
+    link_status: Option<String>,
+    proto: Option<String>,
+    local: Option<String>,
+    remote: Option<String>,
+}
+
+impl JuniperInterface {
+    fn is_up(&self) -> bool {
+        self.admin_status.as_deref() == Some("up")
+            && self.link_status.as_deref() == Some("up")
+    }
+
+    fn is_down(&self) -> bool {
+        self.admin_status.as_deref() == Some("down")
+            || self.link_status.as_deref() == Some("down")
+    }
+}
+
+// =============================================================================
+// Templates
+// =============================================================================
+
+const LINUX_UNAME_TEMPLATE: &str = include_str!("templates/linux_uname.textfsm");
+const LINUX_DF_TEMPLATE: &str = include_str!("templates/linux_df.textfsm");
+const LINUX_PS_TEMPLATE: &str = include_str!("templates/linux_ps.textfsm");
+const JUNIPER_VERSION_TEMPLATE: &str = include_str!("templates/juniper_show_version.textfsm");
+const JUNIPER_INTERFACES_TEMPLATE: &str = include_str!("templates/juniper_show_interfaces_terse.textfsm");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -99,156 +173,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     driver.open().await?;
     println!("Connected!\n");
 
-    // Select commands based on platform
-    let commands: &[CommandTemplate] = match args.platform.as_str() {
-        "linux" => LINUX_COMMANDS,
-        "juniper" | "juniper_junos" => JUNIPER_COMMANDS,
+    match args.platform.as_str() {
+        "linux" => run_linux_examples(&mut driver).await?,
+        "juniper" | "juniper_junos" => run_juniper_examples(&mut driver).await?,
         _ => {
-            eprintln!("Unsupported platform for this example: {}", args.platform);
+            eprintln!("Unsupported platform: {}", args.platform);
             eprintln!("Supported platforms: linux, juniper");
             std::process::exit(1);
-        }
-    };
-
-    // Execute each command and parse with TextFSM
-    for cmd_template in commands {
-        println!("{}", "=".repeat(60));
-        println!("Command: {}", cmd_template.command);
-        println!("Description: {}", cmd_template.description);
-        println!("{}", "=".repeat(60));
-
-        // Execute the command
-        let response = driver.send_command(cmd_template.command).await?;
-
-        if response.failed {
-            eprintln!("Command failed: {:?}", response.failure_message);
-            continue;
-        }
-
-        println!("\n--- Raw Output ---");
-        // Print first 15 lines of raw output
-        let lines: Vec<&str> = response.result.lines().take(15).collect();
-        println!("{}", lines.join("\n"));
-        if response.result.lines().count() > 15 {
-            println!("... (truncated, {} total lines)", response.result.lines().count());
-        }
-
-        // Parse with TextFSM
-        println!("\n--- Parsed Data (TextFSM) ---");
-        match parse_with_textfsm(&response.result, cmd_template.template) {
-            Ok(parsed) => {
-                if parsed.is_empty() {
-                    println!("(no records parsed)");
-                } else {
-                    // Print as JSON for readability
-                    let json = serde_json::to_string_pretty(&parsed)?;
-                    // Limit output if too many records
-                    if parsed.len() > 10 {
-                        let limited: Vec<_> = parsed.into_iter().take(10).collect();
-                        let json = serde_json::to_string_pretty(&limited)?;
-                        println!("{}", json);
-                        println!("... (showing 10 of {} records)", response.result.lines().count());
-                    } else {
-                        println!("{}", json);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("TextFSM parsing error: {}", e);
-            }
-        }
-
-        println!("\nElapsed: {:?}", response.elapsed);
-        println!();
-    }
-
-    // Demonstrate accessing parsed data programmatically
-    println!("{}", "=".repeat(60));
-    println!("Programmatic Access Example");
-    println!("{}", "=".repeat(60));
-
-    if args.platform == "linux" {
-        // Parse uname output
-        let response = driver.send_command("uname -a").await?;
-        if !response.failed {
-            let parsed = parse_with_textfsm(&response.result, LINUX_COMMANDS[0].template)?;
-            if let Some(record) = parsed.first() {
-                println!("\nSystem Info:");
-                println!("  Kernel:   {}", record.get("kernel").unwrap_or(&String::new()));
-                println!("  Hostname: {}", record.get("hostname").unwrap_or(&String::new()));
-                println!("  Release:  {}", record.get("kernelrelease").unwrap_or(&String::new()));
-                println!("  Machine:  {}", record.get("machine").unwrap_or(&String::new()));
-            }
-        }
-
-        // Parse df output and find high usage filesystems
-        let response = driver.send_command("df -h").await?;
-        if !response.failed {
-            let parsed = parse_with_textfsm(&response.result, LINUX_COMMANDS[1].template)?;
-
-            println!("\nFilesystems with >50% usage:");
-            for record in &parsed {
-                if let Some(use_pct) = record.get("usepercent") {
-                    if let Ok(pct) = use_pct.parse::<u32>() {
-                        if pct > 50 {
-                            println!(
-                                "  {} - {}% used ({} of {})",
-                                record.get("mountedon").unwrap_or(&String::new()),
-                                pct,
-                                record.get("used").unwrap_or(&String::new()),
-                                record.get("size").unwrap_or(&String::new()),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    } else if args.platform == "juniper" || args.platform == "juniper_junos" {
-        // Parse show interfaces terse and find down interfaces
-        let response = driver.send_command("show interfaces terse").await?;
-        if !response.failed {
-            let parsed = parse_with_textfsm(&response.result, JUNIPER_COMMANDS[1].template)?;
-
-            println!("\nInterfaces that are DOWN:");
-            let down_interfaces: Vec<_> = parsed
-                .iter()
-                .filter(|r| {
-                    r.get("adminstatus").map(|s| s == "down").unwrap_or(false)
-                        || r.get("linkstatus").map(|s| s == "down").unwrap_or(false)
-                })
-                .take(10)
-                .collect();
-
-            if down_interfaces.is_empty() {
-                println!("  (none)");
-            } else {
-                for record in down_interfaces {
-                    println!(
-                        "  {} - Admin: {}, Link: {}",
-                        record.get("interface").unwrap_or(&String::new()),
-                        record.get("adminstatus").unwrap_or(&String::new()),
-                        record.get("linkstatus").unwrap_or(&String::new()),
-                    );
-                }
-            }
-
-            println!("\nInterfaces that are UP:");
-            let up_interfaces: Vec<_> = parsed
-                .iter()
-                .filter(|r| {
-                    r.get("adminstatus").map(|s| s == "up").unwrap_or(false)
-                        && r.get("linkstatus").map(|s| s == "up").unwrap_or(false)
-                })
-                .take(10)
-                .collect();
-
-            for record in up_interfaces {
-                println!(
-                    "  {} - {}",
-                    record.get("interface").unwrap_or(&String::new()),
-                    record.get("local").unwrap_or(&"(no IP)".to_string()),
-                );
-            }
         }
     }
 
@@ -261,19 +192,232 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Parse text output using a TextFSM template
-fn parse_with_textfsm(
-    output: &str,
-    template_str: &str,
-) -> Result<Vec<HashMap<String, String>>, Box<dyn std::error::Error>> {
-    // Compile the template
-    let template = Template::parse_str(template_str)?;
+async fn run_linux_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std::error::Error>> {
+    // =========================================================================
+    // Example 1: Parse uname -a into UnameInfo struct
+    // =========================================================================
+    println!("{}", "=".repeat(60));
+    println!("Command: uname -a");
+    println!("Parsing into: UnameInfo struct");
+    println!("{}", "=".repeat(60));
 
-    // Create parser and parse the output directly to dictionaries
-    let mut parser = template.parser();
-    let records = parser.parse_text_to_dicts(output)?;
+    let response = driver.send_command("uname -a").await?;
+    if response.failed {
+        eprintln!("Command failed: {:?}", response.failure_message);
+    } else {
+        println!("\nRaw output: {}", response.result.trim());
 
-    Ok(records)
+        let template = Template::parse_str(LINUX_UNAME_TEMPLATE)?;
+        let mut parser = template.parser();
+        let results: Vec<UnameInfo> = parser.parse_text_into(&response.result)?;
+
+        if let Some(info) = results.first() {
+            println!("\nParsed UnameInfo struct:");
+            println!("  Kernel:         {}", info.kernel);
+            println!("  Hostname:       {}", info.hostname);
+            println!("  Kernel Release: {}", info.kernel_release);
+            println!("  Kernel Version: {}", info.kernel_version);
+            println!("  Machine:        {}", info.machine);
+            println!("  OS:             {}", info.os);
+        }
+    }
+    println!();
+
+    // =========================================================================
+    // Example 2: Parse df -h into Vec<DiskUsage>
+    // =========================================================================
+    println!("{}", "=".repeat(60));
+    println!("Command: df -h");
+    println!("Parsing into: Vec<DiskUsage>");
+    println!("{}", "=".repeat(60));
+
+    let response = driver.send_command("df -h").await?;
+    if response.failed {
+        eprintln!("Command failed: {:?}", response.failure_message);
+    } else {
+        println!("\nRaw output (first 10 lines):");
+        for line in response.result.lines().take(10) {
+            println!("  {}", line);
+        }
+
+        let template = Template::parse_str(LINUX_DF_TEMPLATE)?;
+        let mut parser = template.parser();
+        let disks: Vec<DiskUsage> = parser.parse_text_into(&response.result)?;
+
+        println!("\nParsed {} DiskUsage records", disks.len());
+
+        // Show filesystems with high usage using typed access
+        println!("\nFilesystems with >50% usage:");
+        let high_usage: Vec<_> = disks
+            .iter()
+            .filter(|d| d.use_percent_num().map(|p| p > 50).unwrap_or(false))
+            .collect();
+
+        if high_usage.is_empty() {
+            println!("  (none)");
+        } else {
+            for disk in high_usage {
+                println!(
+                    "  {} - {}% used ({} of {}) mounted on {}",
+                    disk.filesystem,
+                    disk.use_percent,
+                    disk.used,
+                    disk.size,
+                    disk.mounted_on
+                );
+            }
+        }
+
+        // Print as JSON to show the full structure
+        println!("\nFirst 3 records as JSON:");
+        let sample: Vec<_> = disks.into_iter().take(3).collect();
+        println!("{}", serde_json::to_string_pretty(&sample)?);
+    }
+    println!();
+
+    // =========================================================================
+    // Example 3: Parse ps aux into Vec<ProcessInfo>
+    // =========================================================================
+    println!("{}", "=".repeat(60));
+    println!("Command: ps aux | head -20");
+    println!("Parsing into: Vec<ProcessInfo>");
+    println!("{}", "=".repeat(60));
+
+    let response = driver.send_command("ps aux | head -20").await?;
+    if response.failed {
+        eprintln!("Command failed: {:?}", response.failure_message);
+    } else {
+        let template = Template::parse_str(LINUX_PS_TEMPLATE)?;
+        let mut parser = template.parser();
+        let processes: Vec<ProcessInfo> = parser.parse_text_into(&response.result)?;
+
+        println!("\nParsed {} ProcessInfo records", processes.len());
+
+        // Find top CPU consumers using typed methods
+        println!("\nTop 5 CPU consumers:");
+        let mut sorted: Vec<_> = processes.iter().collect();
+        sorted.sort_by(|a, b| {
+            b.cpu_percent()
+                .unwrap_or(0.0)
+                .partial_cmp(&a.cpu_percent().unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        for proc in sorted.iter().take(5) {
+            println!(
+                "  PID {:>6} | CPU {:>5}% | MEM {:>5}% | {}",
+                proc.pid,
+                proc.cpu,
+                proc.mem,
+                if proc.command.len() > 40 {
+                    format!("{}...", &proc.command[..40])
+                } else {
+                    proc.command.clone()
+                }
+            );
+        }
+
+        // Print one full record as JSON
+        if let Some(first) = processes.first() {
+            println!("\nExample ProcessInfo as JSON:");
+            println!("{}", serde_json::to_string_pretty(&first)?);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_juniper_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std::error::Error>> {
+    // =========================================================================
+    // Example 1: Parse show version into JuniperVersion
+    // =========================================================================
+    println!("{}", "=".repeat(60));
+    println!("Command: show version");
+    println!("Parsing into: Vec<JuniperVersion>");
+    println!("{}", "=".repeat(60));
+
+    let response = driver.send_command("show version").await?;
+    if response.failed {
+        eprintln!("Command failed: {:?}", response.failure_message);
+    } else {
+        println!("\nRaw output (first 15 lines):");
+        for line in response.result.lines().take(15) {
+            println!("  {}", line);
+        }
+
+        let template = Template::parse_str(JUNIPER_VERSION_TEMPLATE)?;
+        let mut parser = template.parser();
+        let versions: Vec<JuniperVersion> = parser.parse_text_into(&response.result)?;
+
+        println!("\nParsed {} JuniperVersion records", versions.len());
+
+        for (i, ver) in versions.iter().enumerate() {
+            println!("\nRecord {}:", i + 1);
+            if let Some(h) = &ver.hostname {
+                println!("  Hostname:      {}", h);
+            }
+            if let Some(m) = &ver.model {
+                println!("  Model:         {}", m);
+            }
+            if let Some(v) = &ver.junos_version {
+                println!("  JUNOS Version: {}", v);
+            }
+            println!("  Kernel:        {}", ver.kernel);
+        }
+    }
+    println!();
+
+    // =========================================================================
+    // Example 2: Parse show interfaces terse into Vec<JuniperInterface>
+    // =========================================================================
+    println!("{}", "=".repeat(60));
+    println!("Command: show interfaces terse");
+    println!("Parsing into: Vec<JuniperInterface>");
+    println!("{}", "=".repeat(60));
+
+    let response = driver.send_command("show interfaces terse").await?;
+    if response.failed {
+        eprintln!("Command failed: {:?}", response.failure_message);
+    } else {
+        let template = Template::parse_str(JUNIPER_INTERFACES_TEMPLATE)?;
+        let mut parser = template.parser();
+        let interfaces: Vec<JuniperInterface> = parser.parse_text_into(&response.result)?;
+
+        println!("\nParsed {} JuniperInterface records", interfaces.len());
+
+        // Use typed methods to filter interfaces
+        let up_interfaces: Vec<_> = interfaces.iter().filter(|i| i.is_up()).collect();
+        let down_interfaces: Vec<_> = interfaces.iter().filter(|i| i.is_down()).collect();
+
+        println!("\nInterfaces that are UP ({}):", up_interfaces.len());
+        for iface in up_interfaces.iter().take(10) {
+            let ip = iface.local.as_deref().unwrap_or("(no IP)");
+            println!("  {} - {}", iface.interface, ip);
+        }
+        if up_interfaces.len() > 10 {
+            println!("  ... and {} more", up_interfaces.len() - 10);
+        }
+
+        println!("\nInterfaces that are DOWN ({}):", down_interfaces.len());
+        for iface in down_interfaces.iter().take(10) {
+            println!(
+                "  {} - Admin: {}, Link: {}",
+                iface.interface,
+                iface.admin_status.as_deref().unwrap_or("?"),
+                iface.link_status.as_deref().unwrap_or("?")
+            );
+        }
+        if down_interfaces.len() > 10 {
+            println!("  ... and {} more", down_interfaces.len() - 10);
+        }
+
+        // Print sample as JSON
+        println!("\nFirst 3 interfaces as JSON:");
+        let sample: Vec<_> = interfaces.into_iter().take(3).collect();
+        println!("{}", serde_json::to_string_pretty(&sample)?);
+    }
+
+    Ok(())
 }
 
 /// Simple argument parser
@@ -368,7 +512,7 @@ impl Args {
             r#"ferrissh + TextFSM parsing example
 
 Demonstrates using ferrissh to collect CLI output and textfsm-rust to parse
-it into structured data.
+it into strongly-typed Rust structs via serde deserialization.
 
 USAGE:
     cargo run --example textfsm_parsing -- [OPTIONS]
@@ -396,15 +540,15 @@ EXAMPLES:
     RUST_LOG=debug cargo run --example textfsm_parsing -- \
         --host localhost --user admin --password secret
 
-SUPPORTED COMMANDS:
+PARSED STRUCTS:
     Linux:
-      - uname -a        -> Kernel, hostname, version info
-      - df -h           -> Filesystem usage
-      - ps aux          -> Process list
+      - UnameInfo:       uname -a output (kernel, hostname, release, etc.)
+      - DiskUsage:       df -h output (filesystem, size, used, available, %)
+      - ProcessInfo:     ps aux output (user, pid, cpu, mem, command, etc.)
 
     Juniper:
-      - show version           -> JUNOS version info
-      - show interfaces terse  -> Interface status
+      - JuniperVersion:    show version (hostname, model, junos_version, kernel)
+      - JuniperInterface:  show interfaces terse (interface, admin/link status, IP)
 "#
         );
     }
