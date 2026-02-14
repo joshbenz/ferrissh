@@ -24,7 +24,7 @@ pub use privilege_level::PrivilegeLevel;
 ///
 /// // Custom platform
 /// use ferrissh::PlatformDefinition;
-/// let custom = Platform::Custom(PlatformDefinition::new("my_device"));
+/// let custom = Platform::Custom(Box::new(PlatformDefinition::new("my_device")));
 /// ```
 #[derive(Debug, Clone)]
 pub enum Platform {
@@ -33,7 +33,7 @@ pub enum Platform {
     /// Juniper JUNOS.
     JuniperJunos,
     /// User-provided platform definition.
-    Custom(PlatformDefinition),
+    Custom(Box<PlatformDefinition>),
 }
 
 impl From<Platform> for PlatformDefinition {
@@ -41,7 +41,7 @@ impl From<Platform> for PlatformDefinition {
         match p {
             Platform::Linux => vendors::linux::platform(),
             Platform::JuniperJunos => vendors::juniper::platform(),
-            Platform::Custom(def) => def,
+            Platform::Custom(def) => *def,
         }
     }
 }

@@ -135,18 +135,31 @@ impl GenericDriver {
     ///
     /// Then apply vendor-specific post-processing if a behavior is set.
     fn normalize_output(&self, raw: &str, command: &str) -> String {
-        // Strip command echo from the beginning
-        let output = raw
-            .strip_prefix(command)
-            .unwrap_or(raw)
-            .trim_start_matches(['\r', '\n']);
+        debug!("normalize_output: raw={:?}, command={:?}", raw, command);
+
+        // Strip command echo from the beginning.
+        // The PTY may echo the command followed by \r\n, \n, or \r,
+        // so we look for the first line and check if it matches the command.
+        let output = if let Some(pos) = raw.find('\n') {
+            let first_line = raw[..pos].trim_end_matches('\r');
+            if first_line == command {
+                &raw[pos + 1..]
+            } else {
+                raw
+            }
+        } else {
+            raw.strip_prefix(command).unwrap_or(raw)
+        };
+        let output = output.trim_start_matches(['\r', '\n']);
 
         // Strip trailing prompt (last line)
         let stripped = if let Some(pos) = output.rfind('\n') {
-            &output[..pos]
+            output[..pos].trim_end_matches('\r')
         } else {
             output
         };
+
+        debug!("normalize_output: result={:?}", stripped);
 
         // Apply vendor-specific post-processing if present
         if let Some(ref behavior) = self.platform.behavior {
@@ -401,14 +414,13 @@ impl Driver for GenericDriver {
         }
 
         // Update privilege level based on final output
-        if let Some(last_step) = steps.last() {
-            if let Ok(level) = self
+        if let Some(last_step) = steps.last()
+            && let Ok(level) = self
                 .privilege_manager
                 .determine_from_prompt(&last_step.raw_output)
-            {
-                let level_name = level.name.clone();
-                let _ = self.privilege_manager.set_current(&level_name);
-            }
+        {
+            let level_name = level.name.clone();
+            let _ = self.privilege_manager.set_current(&level_name);
         }
 
         Ok(InteractiveResult::new(steps, total_start.elapsed()))
@@ -438,10 +450,10 @@ impl Driver for GenericDriver {
             let responses = self.send_commands(commands).await?;
 
             // Return to original privilege if we had one
-            if let Some(original) = original_privilege {
-                if original != config_priv {
-                    self.acquire_privilege(&original).await?;
-                }
+            if let Some(original) = original_privilege
+                && original != config_priv
+            {
+                self.acquire_privilege(&original).await?;
             }
 
             Ok(responses)
