@@ -43,11 +43,14 @@ pub struct GenericDriver {
 
     /// Combined prompt pattern for all privilege levels.
     prompt_pattern: Regex,
+
+    /// Whether to normalize command output.
+    normalize: bool,
 }
 
 impl GenericDriver {
     /// Create a new generic driver.
-    pub fn new(ssh_config: SshConfig, platform: PlatformDefinition) -> Self {
+    pub fn new(ssh_config: SshConfig, platform: PlatformDefinition, normalize: bool) -> Self {
         let timeout = ssh_config.timeout;
 
         // Build privilege manager
@@ -64,6 +67,7 @@ impl GenericDriver {
             privilege_manager,
             timeout,
             prompt_pattern,
+            normalize,
         }
     }
 
@@ -242,7 +246,11 @@ impl Driver for GenericDriver {
         }
 
         // Normalize output (strip echo + prompt, then vendor post-processing)
-        let result = self.normalize_output(&raw_result, command);
+        let result = if self.normalize {
+            self.normalize_output(&raw_result, command)
+        } else {
+            raw_result.clone()
+        };
 
         // Check for failure patterns
         for pattern in &self.platform.failed_when_contains {
@@ -363,7 +371,11 @@ impl Driver for GenericDriver {
             let raw_output = String::from_utf8_lossy(&data).to_string();
 
             // Normalize output (strip echo + prompt, then vendor post-processing)
-            let output = self.normalize_output(&raw_output, &event.input);
+            let output = if self.normalize {
+                self.normalize_output(&raw_output, &event.input)
+            } else {
+                raw_output.clone()
+            };
 
             // Check for failure patterns
             let step = {

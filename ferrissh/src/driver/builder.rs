@@ -33,6 +33,7 @@ pub struct DriverBuilder {
     timeout: Duration,
     terminal_width: Option<u32>,
     terminal_height: Option<u32>,
+    normalize_output: bool,
 }
 
 impl DriverBuilder {
@@ -47,6 +48,7 @@ impl DriverBuilder {
             timeout: Duration::from_secs(30),
             terminal_width: None,
             terminal_height: None,
+            normalize_output: true,
         }
     }
 
@@ -102,6 +104,16 @@ impl DriverBuilder {
         self
     }
 
+    /// Set whether command output is normalized (default: true).
+    ///
+    /// When enabled, command echo and trailing prompts are stripped from output,
+    /// and vendor-specific post-processing is applied. Disable this to get raw
+    /// device output in `Response::result`.
+    pub fn normalize_output(mut self, normalize: bool) -> Self {
+        self.normalize_output = normalize;
+        self
+    }
+
     /// Set terminal dimensions, overriding the platform's defaults.
     pub fn terminal_size(mut self, width: u32, height: u32) -> Self {
         self.terminal_width = Some(width);
@@ -143,6 +155,6 @@ impl DriverBuilder {
             known_hosts_path: None,
         };
 
-        Ok(GenericDriver::new(ssh_config, platform))
+        Ok(GenericDriver::new(ssh_config, platform, self.normalize_output))
     }
 }
