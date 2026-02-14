@@ -17,7 +17,7 @@ pub struct PatternBuffer {
     buffer: Vec<u8>,
 
     /// How many bytes from the end to search for patterns.
-    /// Default is 1000 bytes, matching scrapli's default.
+    /// Default is 1000 bytes.
     search_depth: usize,
 }
 
@@ -40,11 +40,6 @@ impl PatternBuffer {
         // Strip ANSI escape codes using the vte-based crate
         let cleaned = strip_ansi_escapes::strip(data);
         self.buffer.extend_from_slice(&cleaned);
-    }
-
-    /// Extend the buffer with raw data (no ANSI stripping).
-    pub fn extend_raw(&mut self, data: &[u8]) {
-        self.buffer.extend_from_slice(data);
     }
 
     /// Search only the tail of the buffer for the pattern.
@@ -107,10 +102,6 @@ impl PatternBuffer {
         self.search_depth
     }
 
-    /// Set the search depth.
-    pub fn set_search_depth(&mut self, depth: usize) {
-        self.search_depth = depth;
-    }
 }
 
 impl Default for PatternBuffer {
