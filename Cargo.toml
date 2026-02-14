@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "ferrissh",
+    "ferrissh-macros",
+]
+resolver = "3"

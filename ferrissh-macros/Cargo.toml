@@ -1,0 +1,15 @@
+[package]
+name = "ferrissh-macros"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joshua Benz"]
+description = "Procedural macros for ferrissh"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joshbenz/ferrissh"
+keywords = ["ssh", "network", "automation", "macro", "proc-macro"]
+categories = ["network-programming"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
