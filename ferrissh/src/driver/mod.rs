@@ -15,26 +15,30 @@ pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, I
 pub use privilege::PrivilegeManager;
 pub use response::Response;
 
+use std::future::Future;
+
 use crate::error::Result;
 
 /// Trait for device drivers.
 pub trait Driver: Send + Sync {
     /// Open the connection to the device.
-    async fn open(&mut self) -> Result<()>;
+    fn open(&mut self) -> impl Future<Output = Result<()>> + Send;
 
     /// Close the connection.
-    async fn close(&mut self) -> Result<()>;
+    fn close(&mut self) -> impl Future<Output = Result<()>> + Send;
 
     /// Send a command and wait for the prompt.
-    async fn send_command(&mut self, command: &str) -> Result<Response>;
+    fn send_command(&mut self, command: &str) -> impl Future<Output = Result<Response>> + Send;
 
     /// Send multiple commands sequentially.
-    async fn send_commands(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
-        let mut responses = Vec::with_capacity(commands.len());
-        for cmd in commands {
-            responses.push(self.send_command(cmd).await?);
+    fn send_commands(&mut self, commands: &[&str]) -> impl Future<Output = Result<Vec<Response>>> + Send {
+        async move {
+            let mut responses = Vec::with_capacity(commands.len());
+            for cmd in commands {
+                responses.push(self.send_command(cmd).await?);
+            }
+            Ok(responses)
         }
-        Ok(responses)
     }
 
     /// Send an interactive command sequence.
@@ -57,7 +61,7 @@ pub trait Driver: Send + Sync {
     /// # Ok(())
     /// # }
     /// ```
-    async fn send_interactive(&mut self, events: &[InteractiveEvent]) -> Result<InteractiveResult>;
+    fn send_interactive(&mut self, events: &[InteractiveEvent]) -> impl Future<Output = Result<InteractiveResult>> + Send;
 
     /// Send commands in configuration mode.
     ///
@@ -80,10 +84,10 @@ pub trait Driver: Send + Sync {
     /// # Ok(())
     /// # }
     /// ```
-    async fn send_config(&mut self, commands: &[&str]) -> Result<Vec<Response>>;
+    fn send_config(&mut self, commands: &[&str]) -> impl Future<Output = Result<Vec<Response>>> + Send;
 
     /// Acquire a specific privilege level.
-    async fn acquire_privilege(&mut self, privilege: &str) -> Result<()>;
+    fn acquire_privilege(&mut self, privilege: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Check if the driver is connected.
     fn is_open(&self) -> bool;
