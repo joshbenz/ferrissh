@@ -43,6 +43,7 @@ impl SshConfig {
             username: username.into(),
             auth: AuthMethod::None,
             timeout: Duration::from_secs(30),
+            //netmiko and scrapli use this width. Height doesn't matter so much
             terminal_width: 511,
             terminal_height: 24,
             verify_host_key: false, // TODO: Default to true once known_hosts is implemented
@@ -119,7 +120,4 @@ pub enum AuthMethod {
         /// Optional passphrase for encrypted keys.
         passphrase: Option<String>,
     },
-
-    /// SSH agent authentication.
-    Agent,
 }

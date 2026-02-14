@@ -10,6 +10,7 @@ use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
 use super::Driver;
+use crate::channel::{PtyChannel, PtyConfig};
 use crate::error::{DriverError, Result};
 use log::debug;
 use crate::platform::{DefaultBehavior, PlatformDefinition, VendorBehavior};
@@ -35,6 +36,9 @@ pub struct GenericDriver {
 
     /// SSH transport (None when disconnected).
     transport: Option<SshTransport>,
+
+    /// PTY channel for interactive session (None when disconnected).
+    channel: Option<PtyChannel>,
 
     /// Privilege level manager.
     privilege_manager: PrivilegeManager,
@@ -68,6 +72,7 @@ impl GenericDriver {
             platform,
             behavior,
             transport: None,
+            channel: None,
             privilege_manager,
             timeout,
             prompt_pattern,
@@ -113,19 +118,19 @@ impl GenericDriver {
 
     /// Read until the prompt is matched, then determine current privilege.
     async fn read_until_prompt(&mut self) -> Result<(String, String)> {
-        let transport = self
-            .transport
+        let channel = self
+            .channel
             .as_mut()
             .ok_or(DriverError::NotConnected)?;
 
-        let data = transport
+        let data = channel
             .read_until_pattern(&self.prompt_pattern, self.timeout)
             .await?;
 
         let output = String::from_utf8_lossy(&data).to_string();
 
         // Find the prompt at the end
-        let prompt = if let Some(m) = self.prompt_pattern.find(data.as_slice()) {
+        let prompt = if let Some(m) = self.prompt_pattern.find(&data) {
             String::from_utf8_lossy(&data[m.start()..]).to_string()
         } else {
             String::new()
@@ -152,7 +157,13 @@ impl Driver for GenericDriver {
 
         // Connect
         let transport = SshTransport::connect(self.ssh_config.clone()).await?;
+
+        // Open a PTY channel
+        let russh_channel = transport.open_channel().await?;
+        let pty_channel = PtyChannel::new(russh_channel, PtyConfig::default());
+
         self.transport = Some(transport);
+        self.channel = Some(pty_channel);
 
         // Wait for initial prompt
         let (_, prompt) = self.read_until_prompt().await?;
@@ -175,6 +186,9 @@ impl Driver for GenericDriver {
     }
 
     async fn close(&mut self) -> Result<()> {
+        // Drop the channel first
+        self.channel.take();
+
         if let Some(transport) = self.transport.take() {
             // Execute on_close behavior
             let behavior = self.behavior.clone();
@@ -186,18 +200,18 @@ impl Driver for GenericDriver {
     }
 
     async fn send_command(&mut self, command: &str) -> Result<Response> {
-        let transport = self
-            .transport
+        let channel = self
+            .channel
             .as_mut()
             .ok_or(DriverError::NotConnected)?;
 
         let start = Instant::now();
 
         // Send the command
-        transport.send(command).await?;
+        channel.send(command).await?;
 
         // Wait for prompt
-        let data = transport
+        let data = channel
             .read_until_pattern(&self.prompt_pattern, self.timeout)
             .await?;
 
@@ -205,7 +219,7 @@ impl Driver for GenericDriver {
         let raw_result = String::from_utf8_lossy(&data).to_string();
 
         // Find the prompt
-        let prompt = if let Some(m) = self.prompt_pattern.find(data.as_slice()) {
+        let prompt = if let Some(m) = self.prompt_pattern.find(&data) {
             String::from_utf8_lossy(&data[m.start()..]).trim().to_string()
         } else {
             String::new()
@@ -285,24 +299,24 @@ impl Driver for GenericDriver {
                 })?;
 
             // Send the transition command
-            let transport = self
-                .transport
+            let channel = self
+                .channel
                 .as_mut()
                 .ok_or(DriverError::NotConnected)?;
 
-            transport.send(&transition.command).await?;
+            channel.send(&transition.command).await?;
 
             // Handle authentication if needed
             if transition.needs_auth {
                 if let Some(ref auth_pattern) = transition.auth_prompt {
                     // Wait for auth prompt
-                    let _ = transport
+                    let _ = channel
                         .read_until_pattern(auth_pattern, self.timeout)
                         .await?;
 
                     // Send password (from auth method)
                     if let crate::transport::config::AuthMethod::Password(ref pwd) = self.ssh_config.auth {
-                        transport.send(pwd).await?;
+                        channel.send(pwd).await?;
                     }
                 }
             }
@@ -330,8 +344,8 @@ impl Driver for GenericDriver {
         let total_start = Instant::now();
         let mut steps = Vec::with_capacity(events.len());
 
-        let transport = self
-            .transport
+        let channel = self
+            .channel
             .as_mut()
             .ok_or(DriverError::NotConnected)?;
 
@@ -347,13 +361,13 @@ impl Driver for GenericDriver {
             debug!("send_interactive: sending '{}'", log_input);
 
             // Send the input
-            transport.send(&event.input).await?;
+            channel.send(&event.input).await?;
 
             // Get timeout for this event
             let timeout = event.timeout.unwrap_or(self.timeout);
 
             // Wait for the pattern
-            let data = transport
+            let data = channel
                 .read_until_pattern(&event.pattern, timeout)
                 .await?;
 
@@ -447,7 +461,7 @@ impl Driver for GenericDriver {
     }
 
     fn is_open(&self) -> bool {
-        self.transport.is_some()
+        self.transport.is_some() && self.channel.is_some()
     }
 
     fn current_privilege(&self) -> Option<&str> {

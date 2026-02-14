@@ -9,4 +9,4 @@ mod pty;
 
 pub use buffer::PatternBuffer;
 pub use patterns::PromptMatcher;
-pub use pty::PtyChannel;
+pub use pty::{PtyChannel, PtyConfig};

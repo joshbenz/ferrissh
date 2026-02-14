@@ -3,8 +3,12 @@
 use std::time::Duration;
 
 use regex::bytes::Regex;
+use russh::Channel;
+use russh::client::Msg;
+use russh::ChannelMsg;
 
 use super::buffer::PatternBuffer;
+use crate::error::{Result, TransportError};
 
 /// Configuration for PTY channel behavior.
 #[derive(Debug, Clone)]
@@ -14,12 +18,6 @@ pub struct PtyConfig {
 
     /// Search depth for pattern matching.
     pub search_depth: usize,
-
-    /// Terminal width.
-    pub terminal_width: u32,
-
-    /// Terminal height.
-    pub terminal_height: u32,
 }
 
 impl Default for PtyConfig {
@@ -27,60 +25,95 @@ impl Default for PtyConfig {
         Self {
             timeout: Duration::from_secs(30),
             search_depth: 1000,
-            terminal_width: 511,
-            terminal_height: 24,
         }
     }
 }
 
 /// High-level PTY channel for interactive device sessions.
 ///
-/// This wraps the lower-level transport and provides pattern-based
+/// This wraps a russh channel and provides pattern-based
 /// read operations with timeout handling.
 pub struct PtyChannel {
+    /// The underlying russh channel.
+    channel: Channel<Msg>,
+
     /// Configuration for this channel.
     config: PtyConfig,
 
     /// Pattern buffer for accumulating output.
     buffer: PatternBuffer,
-
-    /// Whether the channel is open.
-    is_open: bool,
 }
 
 impl PtyChannel {
-    /// Create a new PTY channel with the given configuration.
-    pub fn new(config: PtyConfig) -> Self {
+    /// Create a new PTY channel wrapping a russh channel.
+    pub fn new(channel: Channel<Msg>, config: PtyConfig) -> Self {
         Self {
+            channel,
             buffer: PatternBuffer::new(config.search_depth),
             config,
-            is_open: false,
         }
     }
 
-    /// Create a PTY channel with default configuration.
-    pub fn with_defaults() -> Self {
-        Self::new(PtyConfig::default())
+    /// Send data to the channel.
+    pub async fn write(&mut self, data: &[u8]) -> Result<()> {
+        self.channel.data(data).await.map_err(TransportError::Ssh)?;
+        Ok(())
     }
 
-    /// Mark the channel as open.
-    pub fn set_open(&mut self, open: bool) {
-        self.is_open = open;
+    /// Send a command (with newline).
+    pub async fn send(&mut self, command: &str) -> Result<()> {
+        let data = format!("{}\n", command);
+        self.write(data.as_bytes()).await
     }
 
-    /// Check if the channel is open.
-    pub fn is_open(&self) -> bool {
-        self.is_open
+    /// Read until pattern matches (with timeout).
+    pub async fn read_until_pattern(
+        &mut self,
+        pattern: &Regex,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(TransportError::Timeout(timeout).into());
+                }
+                msg = self.channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            self.buffer.extend(&data);
+                            if self.buffer.search_tail(pattern).is_some() {
+                                return Ok(self.buffer.take());
+                            }
+                        }
+                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                            // stderr - also add to buffer
+                            self.buffer.extend(&data);
+                        }
+                        Some(ChannelMsg::Eof) | None => {
+                            return Err(TransportError::Disconnected.into());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
-    /// Get a mutable reference to the buffer.
-    pub fn buffer_mut(&mut self) -> &mut PatternBuffer {
-        &mut self.buffer
+    /// Get current buffer contents without clearing.
+    pub fn peek_buffer(&self) -> &[u8] {
+        self.buffer.as_slice()
     }
 
-    /// Get a reference to the buffer.
-    pub fn buffer(&self) -> &PatternBuffer {
-        &self.buffer
+    /// Clear the buffer.
+    pub fn clear_buffer(&mut self) {
+        self.buffer.clear();
+    }
+
+    /// Take the buffer contents.
+    pub fn take_buffer(&mut self) -> Vec<u8> {
+        self.buffer.take()
     }
 
     /// Get the default timeout.
@@ -91,31 +124,6 @@ impl PtyChannel {
     /// Set the default timeout.
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.config.timeout = timeout;
-    }
-
-    /// Get the configuration.
-    pub fn config(&self) -> &PtyConfig {
-        &self.config
-    }
-
-    /// Clear the internal buffer.
-    pub fn clear_buffer(&mut self) {
-        self.buffer.clear();
-    }
-
-    /// Take the buffer contents.
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        self.buffer.take()
-    }
-
-    /// Extend the buffer with data.
-    pub fn extend_buffer(&mut self, data: &[u8]) {
-        self.buffer.extend(data);
-    }
-
-    /// Check if a pattern is found in the buffer tail.
-    pub fn pattern_found(&self, pattern: &Regex) -> bool {
-        self.buffer.tail_contains(pattern)
     }
 }
 

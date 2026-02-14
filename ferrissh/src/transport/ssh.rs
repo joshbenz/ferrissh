@@ -1,15 +1,12 @@
 //! SSH transport implementation using russh.
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use regex::bytes::Regex;
-use russh::client::{self, Handle, Msg};
-use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKey};
 use russh::Channel;
+use russh::client::{self, Handle, Msg};
+use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 
 use super::config::{AuthMethod, SshConfig};
-use crate::channel::PatternBuffer;
 use crate::error::{Result, TransportError};
 
 /// SSH transport wrapping russh client.
@@ -17,18 +14,12 @@ pub struct SshTransport {
     /// The russh session handle.
     session: Handle<SshHandler>,
 
-    /// The PTY channel for interactive session.
-    channel: Channel<Msg>,
-
-    /// Buffer for accumulating and searching output.
-    buffer: PatternBuffer,
-
     /// Configuration used for this connection.
     config: SshConfig,
 }
 
 impl SshTransport {
-    /// Connect to the SSH server.
+    /// Connect to the SSH server and authenticate.
     pub async fn connect(config: SshConfig) -> Result<Self> {
         let ssh_config = Arc::new(client::Config {
             inactivity_timeout: Some(config.timeout),
@@ -42,7 +33,7 @@ impl SshTransport {
         // Connect to the server
         let mut session = tokio::time::timeout(
             config.timeout,
-            client::connect(ssh_config, config.socket_addr(), handler),
+            client::connect(ssh_config, (config.host.as_str(), config.port), handler),
         )
         .await
         .map_err(|_| TransportError::Timeout(config.timeout))?
@@ -51,8 +42,13 @@ impl SshTransport {
         // Authenticate
         Self::authenticate(&mut session, &config).await?;
 
-        // Open PTY channel
-        let channel = session
+        Ok(Self { session, config })
+    }
+
+    /// Open a new PTY channel on this connection.
+    pub async fn open_channel(&self) -> Result<Channel<Msg>> {
+        let channel = self
+            .session
             .channel_open_session()
             .await
             .map_err(TransportError::Ssh)?;
@@ -60,10 +56,10 @@ impl SshTransport {
         // Request PTY
         channel
             .request_pty(
-                false,
+                true,
                 "xterm",
-                config.terminal_width,
-                config.terminal_height,
+                self.config.terminal_width,
+                self.config.terminal_height,
                 0,
                 0,
                 &[],
@@ -77,31 +73,23 @@ impl SshTransport {
             .await
             .map_err(TransportError::Ssh)?;
 
-        Ok(Self {
-            session,
-            channel,
-            buffer: PatternBuffer::new(1000),
-            config,
-        })
+        Ok(channel)
     }
 
     /// Authenticate with the server.
     async fn authenticate(session: &mut Handle<SshHandler>, config: &SshConfig) -> Result<()> {
         let success = match &config.auth {
-            AuthMethod::None => {
-                session
-                    .authenticate_none(&config.username)
-                    .await
-                    .map_err(TransportError::Ssh)?
-                    .success()
-            }
-            AuthMethod::Password(password) => {
-                session
-                    .authenticate_password(&config.username, password)
-                    .await
-                    .map_err(TransportError::Ssh)?
-                    .success()
-            }
+            AuthMethod::None => session
+                .authenticate_none(&config.username)
+                .await
+                .map_err(TransportError::Ssh)?
+                .success(),
+            // TODO: Lets automatically handle auth interactive with password here
+            AuthMethod::Password(password) => session
+                .authenticate_password(&config.username, password)
+                .await
+                .map_err(TransportError::Ssh)?
+                .success(),
             AuthMethod::PrivateKey { path, passphrase } => {
                 let key = load_secret_key(path, passphrase.as_deref())
                     .map_err(|e| TransportError::Key(e.to_string()))?;
@@ -122,13 +110,6 @@ impl SshTransport {
                     .map_err(TransportError::Ssh)?
                     .success()
             }
-            AuthMethod::Agent => {
-                // TODO: Implement SSH agent support
-                return Err(TransportError::AuthenticationFailed {
-                    user: config.username.clone(),
-                }
-                .into());
-            }
         };
 
         if !success {
@@ -141,71 +122,8 @@ impl SshTransport {
         Ok(())
     }
 
-    /// Send data to the channel.
-    pub async fn write(&mut self, data: &[u8]) -> Result<()> {
-        self.channel
-            .data(data)
-            .await
-            .map_err(TransportError::Ssh)?;
-        Ok(())
-    }
-
-    /// Send a command (with newline).
-    pub async fn send(&mut self, command: &str) -> Result<()> {
-        let data = format!("{}\n", command);
-        self.write(data.as_bytes()).await
-    }
-
-    /// Read until pattern matches (with timeout).
-    pub async fn read_until_pattern(
-        &mut self,
-        pattern: &Regex,
-        timeout: Duration,
-    ) -> Result<Vec<u8>> {
-        use russh::ChannelMsg;
-
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => {
-                    return Err(TransportError::Timeout(timeout).into());
-                }
-                msg = self.channel.wait() => {
-                    match msg {
-                        Some(ChannelMsg::Data { data }) => {
-                            self.buffer.extend(&data);
-                            if self.buffer.search_tail(pattern).is_some() {
-                                return Ok(self.buffer.take());
-                            }
-                        }
-                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
-                            // stderr - also add to buffer
-                            self.buffer.extend(&data);
-                        }
-                        Some(ChannelMsg::Eof) | None => {
-                            return Err(TransportError::Disconnected.into());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    /// Get current buffer contents without clearing.
-    pub fn peek_buffer(&self) -> &[u8] {
-        self.buffer.as_slice()
-    }
-
-    /// Clear the buffer.
-    pub fn clear_buffer(&mut self) {
-        self.buffer.clear();
-    }
-
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
-        drop(self.channel);
         self.session
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await
@@ -218,6 +136,8 @@ impl SshTransport {
 struct SshHandler {
     verify_host_key: bool,
 }
+
+// TODO: Impl drop and warn if user is dropping without calling close
 
 impl client::Handler for SshHandler {
     type Error = russh::Error;
