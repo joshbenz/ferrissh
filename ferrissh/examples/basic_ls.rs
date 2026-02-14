@@ -24,7 +24,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ferrissh::{Driver, DriverBuilder};
+use ferrissh::{Driver, DriverBuilder, Platform};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = DriverBuilder::new(&args.host)
         .port(args.port)
         .username(&args.user)
-        .platform("linux")
+        .platform(Platform::Linux)
         .timeout(Duration::from_secs(args.timeout));
 
     // Set authentication method
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let mut driver = builder.build().await?;
+    let mut driver = builder.build()?;
 
     // Connect
     println!("Opening connection...");
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = driver.send_command("ls -la").await?;
 
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         println!("{}", response.result);

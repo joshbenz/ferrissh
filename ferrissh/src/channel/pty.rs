@@ -8,14 +8,11 @@ use russh::client::Msg;
 use russh::ChannelMsg;
 
 use super::buffer::PatternBuffer;
-use crate::error::{Result, TransportError};
+use crate::error::{ChannelError, Result};
 
 /// Configuration for PTY channel behavior.
 #[derive(Debug, Clone)]
 pub struct PtyConfig {
-    /// Default timeout for operations.
-    pub timeout: Duration,
-
     /// Search depth for pattern matching.
     pub search_depth: usize,
 }
@@ -23,7 +20,6 @@ pub struct PtyConfig {
 impl Default for PtyConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
             search_depth: 1000,
         }
     }
@@ -37,9 +33,6 @@ pub struct PtyChannel {
     /// The underlying russh channel.
     channel: Channel<Msg>,
 
-    /// Configuration for this channel.
-    config: PtyConfig,
-
     /// Pattern buffer for accumulating output.
     buffer: PatternBuffer,
 }
@@ -50,20 +43,21 @@ impl PtyChannel {
         Self {
             channel,
             buffer: PatternBuffer::new(config.search_depth),
-            config,
         }
     }
 
     /// Send data to the channel.
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
-        self.channel.data(data).await.map_err(TransportError::Ssh)?;
+        self.channel.data(data).await.map_err(ChannelError::Ssh)?;
         Ok(())
     }
 
     /// Send a command (with newline).
     pub async fn send(&mut self, command: &str) -> Result<()> {
-        let data = format!("{}\n", command);
-        self.write(data.as_bytes()).await
+        let mut data = Vec::with_capacity(command.len() + 1);
+        data.extend_from_slice(command.as_bytes());
+        data.push(b'\n');
+        self.write(&data).await
     }
 
     /// Read until pattern matches (with timeout).
@@ -77,7 +71,7 @@ impl PtyChannel {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline) => {
-                    return Err(TransportError::Timeout(timeout).into());
+                    return Err(ChannelError::PatternTimeout(timeout).into());
                 }
                 msg = self.channel.wait() => {
                     match msg {
@@ -92,7 +86,7 @@ impl PtyChannel {
                             self.buffer.extend(&data);
                         }
                         Some(ChannelMsg::Eof) | None => {
-                            return Err(TransportError::Disconnected.into());
+                            return Err(ChannelError::Closed.into());
                         }
                         _ => {}
                     }
@@ -116,30 +110,4 @@ impl PtyChannel {
         self.buffer.take()
     }
 
-    /// Get the default timeout.
-    pub fn timeout(&self) -> Duration {
-        self.config.timeout
-    }
-
-    /// Set the default timeout.
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.config.timeout = timeout;
-    }
-}
-
-/// Result of a read operation.
-#[derive(Debug)]
-pub struct ReadResult {
-    /// The data that was read.
-    pub data: Vec<u8>,
-
-    /// Whether the pattern was matched.
-    pub pattern_matched: bool,
-}
-
-impl ReadResult {
-    /// Get the data as a string (lossy UTF-8).
-    pub fn as_str(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.data)
-    }
 }

@@ -8,7 +8,7 @@
 //! ## Features
 //!
 //! - Async SSH connections via russh
-//! - Multi-vendor support (Linux, Juniper, Nokia, Arrcus, Arista, Cisco)
+//! - Multi-vendor support (Linux, Juniper, with extensible platform system)
 //! - Efficient pattern buffer matching (scrapli-style tail search)
 //! - Privilege level management with graph-based navigation
 //! - Easy vendor extensibility
@@ -16,16 +16,15 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use ferrissh::{DriverBuilder, Driver};
+//! use ferrissh::{DriverBuilder, Driver, Platform};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), ferrissh::Error> {
 //!     let mut driver = DriverBuilder::new("192.168.1.1")
 //!         .username("admin")
 //!         .password("secret")
-//!         .platform("linux")
-//!         .build()
-//!         .await?;
+//!         .platform(Platform::Linux)
+//!         .build()?;
 //!
 //!     driver.open().await?;
 //!
@@ -49,5 +48,4 @@ pub use driver::{
     Response,
 };
 pub use error::Error;
-pub use platform::{PlatformDefinition, PrivilegeLevel};
-pub use transport::{AuthMethod, SshConfig};
+pub use platform::{Platform, PlatformDefinition, PrivilegeLevel};

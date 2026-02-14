@@ -26,8 +26,8 @@ use regex::bytes::Regex;
 ///
 /// // Handle a reload command that asks for confirmation
 /// let events = vec![
-///     InteractiveEvent::new("reload", r"Proceed.*\[confirm\]"),
-///     InteractiveEvent::new("y", r"#"),
+///     InteractiveEvent::new("reload", r"Proceed.*\[confirm\]").unwrap(),
+///     InteractiveEvent::new("y", r"#").unwrap(),
 /// ];
 /// ```
 #[derive(Debug, Clone)]
@@ -52,21 +52,7 @@ impl InteractiveEvent {
     ///
     /// * `input` - The text to send
     /// * `pattern` - Regex pattern to wait for after sending
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pattern is not a valid regex. Use `try_new` for fallible creation.
-    pub fn new(input: impl Into<String>, pattern: &str) -> Self {
-        Self {
-            input: input.into(),
-            pattern: Regex::new(pattern).expect("Invalid regex pattern"),
-            hidden: false,
-            timeout: None,
-        }
-    }
-
-    /// Create a new interactive event, returning an error if the pattern is invalid.
-    pub fn try_new(input: impl Into<String>, pattern: &str) -> Result<Self, regex::Error> {
+    pub fn new(input: impl Into<String>, pattern: &str) -> Result<Self, regex::Error> {
         Ok(Self {
             input: input.into(),
             pattern: Regex::new(pattern)?,
@@ -78,13 +64,13 @@ impl InteractiveEvent {
     /// Create an event for hidden input (like passwords).
     ///
     /// The input will not be logged.
-    pub fn hidden(input: impl Into<String>, pattern: &str) -> Self {
-        Self {
+    pub fn hidden(input: impl Into<String>, pattern: &str) -> Result<Self, regex::Error> {
+        Ok(Self {
             input: input.into(),
-            pattern: Regex::new(pattern).expect("Invalid regex pattern"),
+            pattern: Regex::new(pattern)?,
             hidden: true,
             timeout: None,
-        }
+        })
     }
 
     /// Set a custom timeout for this event.
@@ -109,19 +95,17 @@ pub struct InteractiveResult {
     /// Total time for the entire sequence.
     pub elapsed: Duration,
 
-    /// Whether any step failed.
-    pub failed: bool,
 }
 
 impl InteractiveResult {
     /// Create a new interactive result.
     pub fn new(steps: Vec<InteractiveStep>, elapsed: Duration) -> Self {
-        let failed = steps.iter().any(|s| s.failed);
-        Self {
-            steps,
-            elapsed,
-            failed,
-        }
+        Self { steps, elapsed }
+    }
+
+    /// Check if any step failed.
+    pub fn is_success(&self) -> bool {
+        self.steps.iter().all(|s| s.is_success())
     }
 
     /// Get the final output (from the last step).
@@ -131,11 +115,7 @@ impl InteractiveResult {
 
     /// Get all outputs concatenated.
     pub fn full_output(&self) -> String {
-        self.steps
-            .iter()
-            .map(|s| s.output.as_str())
-            .collect::<Vec<_>>()
-            .join("")
+        self.steps.iter().map(|s| s.output.as_str()).collect()
     }
 }
 
@@ -154,10 +134,7 @@ pub struct InteractiveStep {
     /// Time taken for this step.
     pub elapsed: Duration,
 
-    /// Whether this step failed.
-    pub failed: bool,
-
-    /// Failure message if failed.
+    /// Failure message if the step failed.
     pub failure_message: Option<String>,
 }
 
@@ -174,7 +151,6 @@ impl InteractiveStep {
             output: output.into(),
             raw_output: raw_output.into(),
             elapsed,
-            failed: false,
             failure_message: None,
         }
     }
@@ -192,9 +168,13 @@ impl InteractiveStep {
             output: output.into(),
             raw_output: raw_output.into(),
             elapsed,
-            failed: true,
             failure_message: Some(message.into()),
         }
+    }
+
+    /// Check if this step succeeded.
+    pub fn is_success(&self) -> bool {
+        self.failure_message.is_none()
     }
 }
 
@@ -208,9 +188,9 @@ impl InteractiveStep {
 ///
 /// let events = InteractiveBuilder::new()
 ///     .send("copy running-config startup-config")
-///     .expect(r"Destination filename")
+///     .expect(r"Destination filename").unwrap()
 ///     .send("")  // Accept default filename
-///     .expect(r"#")
+///     .expect(r"#").unwrap()
 ///     .with_timeout(Duration::from_secs(60))
 ///     .build();
 /// ```
@@ -271,11 +251,11 @@ pub struct InteractiveBuilderWithInput {
 
 impl InteractiveBuilderWithInput {
     /// Specify the pattern to wait for after sending the input.
-    pub fn expect(mut self, pattern: &str) -> InteractiveBuilder {
+    pub fn expect(mut self, pattern: &str) -> Result<InteractiveBuilder, regex::Error> {
         let mut event = if self.hidden {
-            InteractiveEvent::hidden(&self.input, pattern)
+            InteractiveEvent::hidden(&self.input, pattern)?
         } else {
-            InteractiveEvent::new(&self.input, pattern)
+            InteractiveEvent::new(&self.input, pattern)?
         };
 
         if let Some(timeout) = self.timeout.or(self.builder.default_timeout) {
@@ -283,7 +263,7 @@ impl InteractiveBuilderWithInput {
         }
 
         self.builder.events.push(event);
-        self.builder
+        Ok(self.builder)
     }
 
     /// Set a custom timeout for this specific event.
@@ -299,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_interactive_event_new() {
-        let event = InteractiveEvent::new("reload", r"confirm");
+        let event = InteractiveEvent::new("reload", r"confirm").unwrap();
         assert_eq!(event.input, "reload");
         assert!(!event.hidden);
         assert!(event.timeout.is_none());
@@ -307,18 +287,24 @@ mod tests {
 
     #[test]
     fn test_interactive_event_hidden() {
-        let event = InteractiveEvent::hidden("secret123", r"#");
+        let event = InteractiveEvent::hidden("secret123", r"#").unwrap();
         assert_eq!(event.input, "secret123");
         assert!(event.hidden);
+    }
+
+    #[test]
+    fn test_interactive_event_invalid_pattern() {
+        let result = InteractiveEvent::new("cmd", r"[invalid");
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_interactive_builder() {
         let events = InteractiveBuilder::new()
             .send("reload")
-            .expect(r"confirm")
+            .expect(r"confirm").unwrap()
             .send("y")
-            .expect(r"#")
+            .expect(r"#").unwrap()
             .build();
 
         assert_eq!(events.len(), 2);
@@ -330,9 +316,9 @@ mod tests {
     fn test_interactive_builder_with_hidden() {
         let events = InteractiveBuilder::new()
             .send("enable")
-            .expect(r"[Pp]assword")
+            .expect(r"[Pp]assword").unwrap()
             .send_hidden("secret")
-            .expect(r"#")
+            .expect(r"#").unwrap()
             .build();
 
         assert_eq!(events.len(), 2);
@@ -348,7 +334,7 @@ mod tests {
         ];
         let result = InteractiveResult::new(steps, Duration::from_millis(300));
 
-        assert!(!result.failed);
+        assert!(result.is_success());
         assert_eq!(result.final_output(), Some("output2"));
         assert_eq!(result.full_output(), "output1output2");
     }

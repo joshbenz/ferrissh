@@ -20,10 +20,7 @@ pub struct Response {
     /// Time taken to execute the command.
     pub elapsed: Duration,
 
-    /// Whether the command failed (based on failure patterns).
-    pub failed: bool,
-
-    /// Failure message if the command failed.
+    /// Failure message if the command failed (based on failure patterns).
     pub failure_message: Option<String>,
 }
 
@@ -42,7 +39,6 @@ impl Response {
             raw_result: raw_result.into(),
             prompt: prompt.into(),
             elapsed,
-            failed: false,
             failure_message: None,
         }
     }
@@ -62,14 +58,13 @@ impl Response {
             raw_result: raw_result.into(),
             prompt: prompt.into(),
             elapsed,
-            failed: true,
             failure_message: Some(failure_message.into()),
         }
     }
 
     /// Check if the response indicates success.
     pub fn is_success(&self) -> bool {
-        !self.failed
+        self.failure_message.is_none()
     }
 
     /// Get the result lines as an iterator.

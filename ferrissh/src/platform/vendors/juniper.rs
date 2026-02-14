@@ -34,161 +34,58 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use regex::bytes::Regex;
-
-use crate::driver::GenericDriver;
-use crate::error::Result;
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 
 /// Create the Juniper JUNOS platform definition.
 pub fn platform() -> PlatformDefinition {
-    let mut platform = PlatformDefinition::new("juniper_junos");
-
     // Exec (operational) mode - ">" prompt
     // Matches: user@router>, {master:0}user@router>
-    let exec = PrivilegeLevel {
-        name: "exec".to_string(),
-        pattern: Regex::new(r"(?:\{[^}]+\})?[\w.\-@]+>\s*$").unwrap(),
-        previous_priv: None,
-        escalate_command: None,
-        deescalate_command: None,
-        escalate_auth: false,
-        escalate_prompt: None,
-        not_contains: vec![],
-    };
+    let exec = PrivilegeLevel::new("exec", r"(?:\{[^}]+\})?[\w.\-@]+>\s*$").unwrap();
 
     // Configuration mode - "#" prompt
     // Matches: user@router#, {master:0}[edit]user@router#, [edit interfaces]user@router#
-    let configuration = PrivilegeLevel {
-        name: "configuration".to_string(),
-        pattern: Regex::new(r"(?:\{[^}]+\})?(?:\[edit[^\]]*\]\s*)?[\w.\-@]+#\s*$").unwrap(),
-        previous_priv: Some("exec".to_string()),
-        escalate_command: Some("configure".to_string()),
-        deescalate_command: Some("exit configuration-mode".to_string()),
-        escalate_auth: false,
-        escalate_prompt: None,
-        not_contains: vec![],
-    };
+    let configuration =
+        PrivilegeLevel::new("configuration", r"(?:\{[^}]+\})?(?:\[edit[^\]]*\]\s*)?[\w.\-@]+#\s*$")
+            .unwrap()
+            .with_parent("exec")
+            .with_escalate("configure")
+            .with_deescalate("exit configuration-mode");
 
     // Shell mode - "%" prompt
     // Matches: user@router%, root@router:RE:0%
-    let shell = PrivilegeLevel {
-        name: "shell".to_string(),
-        pattern: Regex::new(r"[\w.\-@:]+%\s*$").unwrap(),
-        previous_priv: Some("exec".to_string()),
-        escalate_command: Some("start shell".to_string()),
-        deescalate_command: Some("exit".to_string()),
-        escalate_auth: false,
-        escalate_prompt: None,
-        not_contains: vec![],
-    };
+    let shell = PrivilegeLevel::new("shell", r"[\w.\-@:]+%\s*$")
+        .unwrap()
+        .with_parent("exec")
+        .with_escalate("start shell")
+        .with_deescalate("exit");
 
-    platform.privilege_levels.insert("exec".to_string(), exec);
-    platform
-        .privilege_levels
-        .insert("configuration".to_string(), configuration);
-    platform.privilege_levels.insert("shell".to_string(), shell);
-    platform.default_privilege = "exec".to_string();
-
-    // JUNOS error patterns
-    platform.failed_when_contains = vec![
-        "unknown command".to_string(),
-        "syntax error".to_string(),
-        "error:".to_string(),
-        "missing argument".to_string(),
-        "invalid".to_string(),
-    ];
-
-    // On-open: disable paging and set terminal width
-    platform.on_open_commands = vec![
-        "set cli screen-length 0".to_string(),
-        "set cli screen-width 511".to_string(),
-    ];
-
-    // Terminal size
-    platform.terminal_width = 511;
-    platform.terminal_height = 24;
-
-    // Use Juniper-specific behavior
-    platform.behavior = Some(Arc::new(JuniperBehavior));
-
-    platform
+    PlatformDefinition::new("juniper_junos")
+        .with_privilege(exec)
+        .with_privilege(configuration)
+        .with_privilege(shell)
+        .with_default_privilege("exec")
+        .with_failure_pattern("unknown command")
+        .with_failure_pattern("syntax error")
+        .with_failure_pattern("error:")
+        .with_failure_pattern("missing argument")
+        .with_failure_pattern("invalid")
+        .with_on_open_command("set cli screen-length 0")
+        .with_on_open_command("set cli screen-width 511")
+        .with_terminal_size(511, 24)
+        .with_behavior(Arc::new(JuniperBehavior))
 }
 
 /// Juniper JUNOS-specific behavior.
 pub struct JuniperBehavior;
 
-#[async_trait]
 impl VendorBehavior for JuniperBehavior {
-    async fn on_open(&self, _driver: &mut GenericDriver) -> Result<()> {
-        // on_open commands handle paging and screen width
-        // Additional initialization could go here
-        Ok(())
-    }
-
-    async fn on_close(&self, _driver: &mut GenericDriver) -> Result<()> {
-        // No special cleanup needed for Juniper
-        Ok(())
-    }
-
-    fn normalize_output(&self, raw: &str, command: &str) -> String {
-        // Strip command echo from the beginning
-        let output = raw
-            .strip_prefix(command)
-            .unwrap_or(raw)
-            .trim_start_matches(['\r', '\n']);
-
-        // Strip trailing prompt patterns
-        let lines: Vec<&str> = output.lines().collect();
-        if lines.is_empty() {
-            return String::new();
-        }
-
-        // Check if last line looks like a JUNOS prompt (ends with >, #, or %)
-        let last = lines.last().unwrap().trim();
-        if last.ends_with('>') || last.ends_with('#') || last.ends_with('%') {
-            // Also check for [edit] patterns that might be on their own line
-            let result: Vec<&str> = lines[..lines.len() - 1]
-                .iter()
-                .filter(|line| !line.trim().starts_with("[edit"))
-                .copied()
-                .collect();
-            result.join("\n")
-        } else {
-            output.to_string()
-        }
-    }
-
-    fn detect_failure(&self, output: &str) -> Option<String> {
-        // JUNOS-specific error patterns
-        let error_patterns = [
-            ("unknown command", "unknown command"),
-            ("syntax error", "syntax error"),
-            ("error:", "error"),
-            ("missing argument", "missing argument"),
-            ("warning: ", "warning"),  // JUNOS warnings
-            ("failed", "operation failed"),
-            ("invalid", "invalid input"),
-        ];
-
-        // Check for lines starting with error markers (more specific)
-        for line in output.lines() {
-            let trimmed = line.trim().to_lowercase();
-
-            // "^" marker indicates syntax error position in JUNOS
-            if trimmed.starts_with('^') {
-                return Some("syntax error".to_string());
-            }
-
-            for (pattern, msg) in &error_patterns {
-                if trimmed.contains(pattern) {
-                    return Some(msg.to_string());
-                }
-            }
-        }
-
-        None
+    fn post_process_output(&self, output: &str) -> String {
+        // Filter out [edit] context lines that JUNOS includes in config mode
+        output
+            .lines()
+            .filter(|line| !line.trim().starts_with("[edit"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -290,39 +187,22 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_output() {
+    fn test_post_process_output() {
         let behavior = JuniperBehavior;
 
-        // Command echo removal
-        let raw = "show version\nHostname: router\nModel: mx960\nuser@router>";
-        let normalized = behavior.normalize_output(raw, "show version");
-        assert_eq!(normalized, "Hostname: router\nModel: mx960");
+        // Output without [edit] lines passes through
+        let output = "Hostname: router\nModel: mx960";
+        assert_eq!(behavior.post_process_output(output), output);
 
-        // With [edit] line
-        let raw = "show interfaces\nge-0/0/0\n[edit]\nuser@router#";
-        let normalized = behavior.normalize_output(raw, "show interfaces");
-        assert_eq!(normalized, "ge-0/0/0");
+        // [edit] lines are filtered out
+        let output = "ge-0/0/0\n[edit]\nge-0/0/1";
+        assert_eq!(behavior.post_process_output(output), "ge-0/0/0\nge-0/0/1");
+
+        // [edit interfaces] context lines are also filtered
+        let output = "ge-0/0/0\n[edit interfaces]";
+        assert_eq!(behavior.post_process_output(output), "ge-0/0/0");
     }
 
-    #[test]
-    fn test_detect_failure() {
-        let behavior = JuniperBehavior;
-
-        // Unknown command
-        assert!(behavior.detect_failure("            ^\nunknown command.").is_some());
-
-        // Syntax error with ^ marker
-        assert!(behavior.detect_failure("        ^\n").is_some());
-
-        // Error message
-        assert!(behavior.detect_failure("error: configuration check-out failed").is_some());
-
-        // Missing argument
-        assert!(behavior.detect_failure("missing argument").is_some());
-
-        // Valid output should not be flagged
-        assert!(behavior.detect_failure("Hostname: router\nModel: mx960").is_none());
-    }
 
     #[test]
     fn test_on_open_commands() {

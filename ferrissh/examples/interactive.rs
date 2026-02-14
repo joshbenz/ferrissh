@@ -18,7 +18,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ferrissh::{Driver, DriverBuilder, InteractiveBuilder, InteractiveEvent};
+use ferrissh::{Driver, DriverBuilder, InteractiveBuilder, InteractiveEvent, Platform};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = DriverBuilder::new(&args.host)
         .port(args.port)
         .username(&args.user)
-        .platform("linux")
+        .platform(Platform::Linux)
         .timeout(Duration::from_secs(args.timeout));
 
     if let Some(password) = &args.password {
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let mut driver = builder.build().await?;
+    let mut driver = builder.build()?;
 
     println!("Connecting to {}:{}...", args.host, args.port);
     driver.open().await?;
@@ -55,15 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Sending 'echo hello' and waiting for prompt...\n");
 
     let events = vec![
-        InteractiveEvent::new("echo hello", r"[$#]\s*$"),
+        InteractiveEvent::new("echo hello", r"[$#]\s*$")?,
     ];
 
-    let result = driver.send_interactive(events).await?;
+    let result = driver.send_interactive(&events).await?;
 
     println!("Result:");
     println!("  Steps: {}", result.steps.len());
     println!("  Total time: {:?}", result.elapsed);
-    println!("  Failed: {}", result.failed);
+    println!("  Failed: {}", !result.is_success());
     if let Some(output) = result.final_output() {
         println!("  Output: {}", output.trim());
     }
@@ -75,14 +75,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let events = InteractiveBuilder::new()
         .send("echo 'Hello from ferrissh!' > /tmp/ferrissh_test.txt")
-        .expect(r"[$#]\s*$")
+        .expect(r"[$#]\s*$")?
         .send("cat /tmp/ferrissh_test.txt")
-        .expect(r"[$#]\s*$")
+        .expect(r"[$#]\s*$")?
         .send("rm /tmp/ferrissh_test.txt")
-        .expect(r"[$#]\s*$")
+        .expect(r"[$#]\s*$")?
         .build();
 
-    let result = driver.send_interactive(events).await?;
+    let result = driver.send_interactive(&events).await?;
 
     println!("Result:");
     for (i, step) in result.steps.iter().enumerate() {
@@ -102,17 +102,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Note: This is a simulation since most Linux commands don't need confirmation
     let events = InteractiveBuilder::new()
         .send("echo 'Continue? [y/n]' && read answer && echo \"You said: $answer\"")
-        .expect(r"\[y/n\]")
+        .expect(r"\[y/n\]")?
         .send("y")
-        .expect(r"[$#]\s*$")
+        .expect(r"[$#]\s*$")?
         .with_timeout(Duration::from_secs(5))
         .build();
 
-    let result = driver.send_interactive(events).await?;
+    let result = driver.send_interactive(&events).await?;
 
     println!("Result:");
     println!("  Final output: {:?}", result.final_output().map(|s| s.trim()));
-    println!("  Failed: {}", result.failed);
+    println!("  Failed: {}", !result.is_success());
     println!();
 
     // Example 4: Show current privilege level

@@ -124,17 +124,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-trait"
-version = "0.1.89"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -676,6 +665,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "equivalent"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -700,10 +695,9 @@ dependencies = [
 name = "ferrissh"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "env_logger",
+ "indexmap",
  "log",
- "once_cell",
  "regex",
  "russh",
  "serde",
@@ -918,6 +912,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
 name = "hax-lib"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1024,6 +1024,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "indexmap"
+version = "2.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
+dependencies = [
+ "equivalent",
+ "hashbrown",
 ]
 
 [[package]]
@@ -2208,20 +2218,21 @@ dependencies = [
 
 [[package]]
 name = "textfsm-core"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "842bf1fc7de602adbdda1fb47922a30f3c3641f52acc7308c07fe4e7116c5fc5"
+checksum = "8049f0cd09e144859787ec45b95af4042284c0886070390e9d3f12587975fdc3"
 dependencies = [
  "fancy-regex",
+ "indexmap",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "textfsm-macros"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d57cf75889601f198f50dc5e71880b4116c520242c98e2c047b5517260d0999e"
+checksum = "55721aec24c33458b5a1038aeb6a54331d8d5f6f2242f8413e66200e880903bd"
 dependencies = [
  "glob",
  "proc-macro2",
@@ -2232,9 +2243,9 @@ dependencies = [
 
 [[package]]
 name = "textfsm-rust"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35f3ecc23a7be22b4fec7894d320faff159d312b807cd66f3db5e24288c2fcda"
+checksum = "89a51c06507cdf60d3c06dad4d6bdd8fcda9b641a2631703ec4c965edf2c15a8"
 dependencies = [
  "serde",
  "textfsm-core",

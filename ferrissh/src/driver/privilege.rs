@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use indexmap::IndexMap;
 use regex::bytes::Regex;
 
 use crate::error::{DriverError, Result};
@@ -17,7 +18,7 @@ use crate::platform::PrivilegeLevel;
 #[derive(Debug)]
 pub struct PrivilegeManager {
     /// All defined privilege levels.
-    levels: HashMap<String, PrivilegeLevel>,
+    levels: IndexMap<String, PrivilegeLevel>,
 
     /// Adjacency list for the privilege graph.
     graph: HashMap<String, HashSet<String>>,
@@ -28,7 +29,7 @@ pub struct PrivilegeManager {
 
 impl PrivilegeManager {
     /// Create a new privilege manager from privilege level definitions.
-    pub fn new(levels: HashMap<String, PrivilegeLevel>) -> Self {
+    pub fn new(levels: IndexMap<String, PrivilegeLevel>) -> Self {
         let graph = Self::build_graph(&levels);
 
         // Find the root level (no previous_priv)
@@ -45,7 +46,7 @@ impl PrivilegeManager {
     }
 
     /// Build the bidirectional adjacency list from privilege definitions.
-    fn build_graph(levels: &HashMap<String, PrivilegeLevel>) -> HashMap<String, HashSet<String>> {
+    fn build_graph(levels: &IndexMap<String, PrivilegeLevel>) -> HashMap<String, HashSet<String>> {
         let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
 
         for (name, level) in levels {
@@ -173,7 +174,6 @@ impl PrivilegeManager {
             // Escalating: use escalate_command from target
             return Some(TransitionInfo {
                 command: to_level.escalate_command.clone()?,
-                needs_auth: to_level.escalate_auth,
                 auth_prompt: to_level.escalate_prompt.clone(),
             });
         }
@@ -183,7 +183,6 @@ impl PrivilegeManager {
             // De-escalating: use deescalate_command from current
             return Some(TransitionInfo {
                 command: from_level.deescalate_command.clone()?,
-                needs_auth: false,
                 auth_prompt: None,
             });
         }
@@ -203,10 +202,7 @@ pub struct TransitionInfo {
     /// Command to execute for the transition.
     pub command: String,
 
-    /// Whether authentication is required.
-    pub needs_auth: bool,
-
-    /// Pattern to match for auth prompt (if needs_auth is true).
+    /// Pattern to match for auth prompt. If `Some`, authentication is required.
     pub auth_prompt: Option<Regex>,
 }
 
@@ -214,51 +210,28 @@ pub struct TransitionInfo {
 mod tests {
     use super::*;
 
-    fn make_test_levels() -> HashMap<String, PrivilegeLevel> {
-        let mut levels = HashMap::new();
+    fn make_test_levels() -> IndexMap<String, PrivilegeLevel> {
+        let user = PrivilegeLevel::new("user", r">\s*$").unwrap();
 
-        levels.insert(
-            "user".to_string(),
-            PrivilegeLevel {
-                name: "user".to_string(),
-                pattern: Regex::new(r">\s*$").unwrap(),
-                previous_priv: None,
-                escalate_command: None,
-                deescalate_command: None,
-                escalate_auth: false,
-                escalate_prompt: None,
-                not_contains: vec![],
-            },
-        );
+        let privileged = PrivilegeLevel::new("privileged", r"#\s*$")
+            .unwrap()
+            .with_parent("user")
+            .with_escalate("enable")
+            .with_deescalate("disable")
+            .with_auth(r"[Pp]assword:\s*$")
+            .unwrap()
+            .with_not_contains("(config)");
 
-        levels.insert(
-            "privileged".to_string(),
-            PrivilegeLevel {
-                name: "privileged".to_string(),
-                pattern: Regex::new(r"#\s*$").unwrap(),
-                previous_priv: Some("user".to_string()),
-                escalate_command: Some("enable".to_string()),
-                deescalate_command: Some("disable".to_string()),
-                escalate_auth: true,
-                escalate_prompt: Some(Regex::new(r"[Pp]assword:\s*$").unwrap()),
-                not_contains: vec!["(config)".to_string()],
-            },
-        );
+        let configuration = PrivilegeLevel::new("configuration", r"\(config[^)]*\)#\s*$")
+            .unwrap()
+            .with_parent("privileged")
+            .with_escalate("configure terminal")
+            .with_deescalate("end");
 
-        levels.insert(
-            "configuration".to_string(),
-            PrivilegeLevel {
-                name: "configuration".to_string(),
-                pattern: Regex::new(r"\(config[^)]*\)#\s*$").unwrap(),
-                previous_priv: Some("privileged".to_string()),
-                escalate_command: Some("configure terminal".to_string()),
-                deescalate_command: Some("end".to_string()),
-                escalate_auth: false,
-                escalate_prompt: None,
-                not_contains: vec![],
-            },
-        );
-
+        let mut levels = IndexMap::new();
+        levels.insert("user".to_string(), user);
+        levels.insert("privileged".to_string(), privileged);
+        levels.insert("configuration".to_string(), configuration);
         levels
     }
 
@@ -297,11 +270,11 @@ mod tests {
         // Escalating user -> privileged
         let trans = manager.get_transition("user", "privileged").unwrap();
         assert_eq!(trans.command, "enable");
-        assert!(trans.needs_auth);
+        assert!(trans.auth_prompt.is_some());
 
         // De-escalating privileged -> user
         let trans = manager.get_transition("privileged", "user").unwrap();
         assert_eq!(trans.command, "disable");
-        assert!(!trans.needs_auth);
+        assert!(trans.auth_prompt.is_none());
     }
 }

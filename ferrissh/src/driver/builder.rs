@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::generic::GenericDriver;
-use crate::error::{PlatformError, Result};
-use crate::platform::{PlatformDefinition, PlatformRegistry};
+use crate::error::{DriverError, PlatformError, Result};
+use crate::platform::{Platform, PlatformDefinition};
 use crate::transport::config::{AuthMethod, SshConfig};
 
 /// Builder for constructing device drivers.
@@ -13,15 +13,14 @@ use crate::transport::config::{AuthMethod, SshConfig};
 /// # Example
 ///
 /// ```rust,no_run
-/// use ferrissh::driver::DriverBuilder;
+/// use ferrissh::{DriverBuilder, Platform};
 ///
 /// # async fn example() -> Result<(), ferrissh::Error> {
 /// let driver = DriverBuilder::new("192.168.1.1")
 ///     .username("admin")
 ///     .password("secret")
-///     .platform("linux")
-///     .build()
-///     .await?;
+///     .platform(Platform::Linux)
+///     .build()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -30,11 +29,10 @@ pub struct DriverBuilder {
     port: u16,
     username: Option<String>,
     auth: AuthMethod,
-    platform_name: Option<String>,
-    custom_platform: Option<PlatformDefinition>,
+    platform: Option<Platform>,
     timeout: Duration,
-    terminal_width: u32,
-    terminal_height: u32,
+    terminal_width: Option<u32>,
+    terminal_height: Option<u32>,
 }
 
 impl DriverBuilder {
@@ -45,11 +43,10 @@ impl DriverBuilder {
             port: 22,
             username: None,
             auth: AuthMethod::None,
-            platform_name: None,
-            custom_platform: None,
+            platform: None,
             timeout: Duration::from_secs(30),
-            terminal_width: 511,
-            terminal_height: 24,
+            terminal_width: None,
+            terminal_height: None,
         }
     }
 
@@ -93,15 +90,9 @@ impl DriverBuilder {
         self
     }
 
-    /// Set the platform name (e.g., "linux", "cisco_iosxe").
-    pub fn platform(mut self, platform: impl Into<String>) -> Self {
-        self.platform_name = Some(platform.into());
-        self
-    }
-
-    /// Set a custom platform definition.
-    pub fn custom_platform(mut self, platform: PlatformDefinition) -> Self {
-        self.custom_platform = Some(platform);
+    /// Set the platform.
+    pub fn platform(mut self, platform: Platform) -> Self {
+        self.platform = Some(platform);
         self
     }
 
@@ -111,10 +102,10 @@ impl DriverBuilder {
         self
     }
 
-    /// Set terminal dimensions.
+    /// Set terminal dimensions, overriding the platform's defaults.
     pub fn terminal_size(mut self, width: u32, height: u32) -> Self {
-        self.terminal_width = width;
-        self.terminal_height = height;
+        self.terminal_width = Some(width);
+        self.terminal_height = Some(height);
         self
     }
 
@@ -122,42 +113,32 @@ impl DriverBuilder {
     ///
     /// This creates the driver but does not connect. Call `open()` on the
     /// returned driver to establish the connection.
-    pub async fn build(self) -> Result<GenericDriver> {
-        // Get username
-        let username = self.username.ok_or_else(|| {
-            PlatformError::InvalidDefinition {
-                message: "Username is required".to_string(),
-            }
+    pub fn build(self) -> Result<GenericDriver> {
+        let username = self.username.ok_or_else(|| DriverError::InvalidConfig {
+            message: "Username is required".to_string(),
         })?;
 
-        // Get platform definition
-        let platform = if let Some(custom) = self.custom_platform {
-            custom
-        } else if let Some(name) = self.platform_name {
-            PlatformRegistry::global()
-                .read()
-                .map_err(|_| PlatformError::InvalidDefinition {
-                    message: "Failed to acquire registry lock".to_string(),
-                })?
-                .get(&name)
-                .ok_or_else(|| PlatformError::UnknownPlatform { name })?
-                .clone()
-        } else {
-            return Err(PlatformError::InvalidDefinition {
-                message: "Platform must be specified".to_string(),
+        if matches!(self.auth, AuthMethod::None) {
+            return Err(DriverError::InvalidConfig {
+                message: "Authentication method is required - call password() or private_key()"
+                    .to_string(),
             }
             .into());
-        };
+        }
 
-        // Build SSH config
+        let platform = self.platform.ok_or_else(|| PlatformError::InvalidDefinition {
+            message: "Platform must be specified".to_string(),
+        })?;
+        let platform = PlatformDefinition::from(platform);
+
         let ssh_config = SshConfig {
             host: self.host,
             port: self.port,
             username,
             auth: self.auth,
             timeout: self.timeout,
-            terminal_width: self.terminal_width,
-            terminal_height: self.terminal_height,
+            terminal_width: self.terminal_width.unwrap_or(platform.terminal_width),
+            terminal_height: self.terminal_height.unwrap_or(platform.terminal_height),
             verify_host_key: false,
             known_hosts_path: None,
         };

@@ -1,9 +1,7 @@
 //! Generic driver implementation that works with any platform.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use regex::bytes::Regex;
 
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
@@ -13,7 +11,7 @@ use super::Driver;
 use crate::channel::{PtyChannel, PtyConfig};
 use crate::error::{DriverError, Result};
 use log::debug;
-use crate::platform::{DefaultBehavior, PlatformDefinition, VendorBehavior};
+use crate::platform::PlatformDefinition;
 use crate::transport::config::SshConfig;
 use crate::transport::SshTransport;
 
@@ -30,9 +28,6 @@ pub struct GenericDriver {
 
     /// Platform definition.
     platform: PlatformDefinition,
-
-    /// Vendor behavior implementation.
-    behavior: Arc<dyn VendorBehavior>,
 
     /// SSH transport (None when disconnected).
     transport: Option<SshTransport>,
@@ -58,19 +53,12 @@ impl GenericDriver {
         // Build privilege manager
         let privilege_manager = PrivilegeManager::new(platform.privilege_levels.clone());
 
-        // Get behavior or use default
-        let behavior = platform
-            .behavior
-            .clone()
-            .unwrap_or_else(|| Arc::new(DefaultBehavior));
-
         // Build combined prompt pattern
         let prompt_pattern = Self::build_combined_pattern(&platform);
 
         Self {
             ssh_config,
             platform,
-            behavior,
             transport: None,
             channel: None,
             privilege_manager,
@@ -139,6 +127,31 @@ impl GenericDriver {
         Ok((output, prompt))
     }
 
+    /// Universal output normalization: strip command echo and trailing prompt.
+    ///
+    /// Then apply vendor-specific post-processing if a behavior is set.
+    fn normalize_output(&self, raw: &str, command: &str) -> String {
+        // Strip command echo from the beginning
+        let output = raw
+            .strip_prefix(command)
+            .unwrap_or(raw)
+            .trim_start_matches(['\r', '\n']);
+
+        // Strip trailing prompt (last line)
+        let stripped = if let Some(pos) = output.rfind('\n') {
+            &output[..pos]
+        } else {
+            output
+        };
+
+        // Apply vendor-specific post-processing if present
+        if let Some(ref behavior) = self.platform.behavior {
+            behavior.post_process_output(stripped)
+        } else {
+            stripped.to_string()
+        }
+    }
+
     /// Execute on_open commands from platform definition.
     async fn execute_on_open_commands(&mut self) -> Result<()> {
         for cmd in &self.platform.on_open_commands.clone() {
@@ -148,7 +161,6 @@ impl GenericDriver {
     }
 }
 
-#[async_trait]
 impl Driver for GenericDriver {
     async fn open(&mut self) -> Result<()> {
         if self.transport.is_some() {
@@ -174,26 +186,24 @@ impl Driver for GenericDriver {
             self.privilege_manager.set_current(&level_name)?;
         }
 
-        // Execute on_open behavior
-        // Note: We need to clone the Arc to avoid borrow issues
-        let behavior = self.behavior.clone();
-        behavior.on_open(self).await?;
-
-        // Execute on_open commands
+        // Execute on_open commands from platform definition
         self.execute_on_open_commands().await?;
 
         Ok(())
     }
 
     async fn close(&mut self) -> Result<()> {
+        // Execute on_close commands before disconnecting
+        if self.channel.is_some() {
+            for cmd in &self.platform.on_close_commands.clone() {
+                let _ = self.send_command(cmd).await;
+            }
+        }
+
         // Drop the channel first
         self.channel.take();
 
         if let Some(transport) = self.transport.take() {
-            // Execute on_close behavior
-            let behavior = self.behavior.clone();
-            behavior.on_close(self).await?;
-
             transport.close().await?;
         }
         Ok(())
@@ -231,22 +241,10 @@ impl Driver for GenericDriver {
             let _ = self.privilege_manager.set_current(&level_name);
         }
 
-        // Normalize output
-        let result = self.behavior.normalize_output(&raw_result, command);
+        // Normalize output (strip echo + prompt, then vendor post-processing)
+        let result = self.normalize_output(&raw_result, command);
 
-        // Check for failures
-        if let Some(failure_msg) = self.behavior.detect_failure(&result) {
-            return Ok(Response::failed(
-                command,
-                result,
-                raw_result,
-                prompt,
-                elapsed,
-                failure_msg,
-            ));
-        }
-
-        // Also check platform's failed_when_contains
+        // Check for failure patterns
         for pattern in &self.platform.failed_when_contains {
             if result.contains(pattern) {
                 return Ok(Response::failed(
@@ -261,14 +259,6 @@ impl Driver for GenericDriver {
         }
 
         Ok(Response::new(command, result, raw_result, prompt, elapsed))
-    }
-
-    async fn send_commands(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
-        let mut responses = Vec::with_capacity(commands.len());
-        for cmd in commands {
-            responses.push(self.send_command(cmd).await?);
-        }
-        Ok(responses)
     }
 
     async fn acquire_privilege(&mut self, target: &str) -> Result<()> {
@@ -307,17 +297,15 @@ impl Driver for GenericDriver {
             channel.send(&transition.command).await?;
 
             // Handle authentication if needed
-            if transition.needs_auth {
-                if let Some(ref auth_pattern) = transition.auth_prompt {
-                    // Wait for auth prompt
-                    let _ = channel
-                        .read_until_pattern(auth_pattern, self.timeout)
-                        .await?;
+            if let Some(ref auth_pattern) = transition.auth_prompt {
+                // Wait for auth prompt
+                let _ = channel
+                    .read_until_pattern(auth_pattern, self.timeout)
+                    .await?;
 
-                    // Send password (from auth method)
-                    if let crate::transport::config::AuthMethod::Password(ref pwd) = self.ssh_config.auth {
-                        channel.send(pwd).await?;
-                    }
+                // Send password (from auth method)
+                if let crate::transport::config::AuthMethod::Password(ref pwd) = self.ssh_config.auth {
+                    channel.send(pwd).await?;
                 }
             }
 
@@ -340,14 +328,9 @@ impl Driver for GenericDriver {
         Ok(())
     }
 
-    async fn send_interactive(&mut self, events: Vec<InteractiveEvent>) -> Result<InteractiveResult> {
+    async fn send_interactive(&mut self, events: &[InteractiveEvent]) -> Result<InteractiveResult> {
         let total_start = Instant::now();
         let mut steps = Vec::with_capacity(events.len());
-
-        let channel = self
-            .channel
-            .as_mut()
-            .ok_or(DriverError::NotConnected)?;
 
         for event in events {
             let step_start = Instant::now();
@@ -360,34 +343,30 @@ impl Driver for GenericDriver {
             };
             debug!("send_interactive: sending '{}'", log_input);
 
-            // Send the input
-            channel.send(&event.input).await?;
+            // Borrow channel for I/O, then release before normalize_output
+            let (data, step_elapsed) = {
+                let channel = self
+                    .channel
+                    .as_mut()
+                    .ok_or(DriverError::NotConnected)?;
 
-            // Get timeout for this event
-            let timeout = event.timeout.unwrap_or(self.timeout);
+                channel.send(&event.input).await?;
 
-            // Wait for the pattern
-            let data = channel
-                .read_until_pattern(&event.pattern, timeout)
-                .await?;
+                let timeout = event.timeout.unwrap_or(self.timeout);
+                let data = channel
+                    .read_until_pattern(&event.pattern, timeout)
+                    .await?;
 
-            let step_elapsed = step_start.elapsed();
+                (data, step_start.elapsed())
+            };
+
             let raw_output = String::from_utf8_lossy(&data).to_string();
 
-            // Normalize output
-            let output = self.behavior.normalize_output(&raw_output, &event.input);
+            // Normalize output (strip echo + prompt, then vendor post-processing)
+            let output = self.normalize_output(&raw_output, &event.input);
 
-            // Check for failures
-            let step = if let Some(failure_msg) = self.behavior.detect_failure(&output) {
-                InteractiveStep::failed(
-                    log_input,
-                    output,
-                    raw_output,
-                    step_elapsed,
-                    failure_msg,
-                )
-            } else {
-                // Also check platform's failed_when_contains
+            // Check for failure patterns
+            let step = {
                 let mut failed_step = None;
                 for pattern in &self.platform.failed_when_contains {
                     if output.contains(pattern) {

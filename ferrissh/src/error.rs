@@ -72,12 +72,16 @@ pub enum ChannelError {
     ShellRequestFailed,
 
     /// Pattern matching timed out
-    #[error("Pattern not found within timeout")]
-    PatternTimeout,
+    #[error("Pattern not found within {0:?}")]
+    PatternTimeout(std::time::Duration),
 
     /// Channel closed unexpectedly
     #[error("Channel closed")]
     Closed,
+
+    /// SSH protocol error on the channel
+    #[error("Channel SSH error: {0}")]
+    Ssh(russh::Error),
 
     /// Invalid regex pattern
     #[error("Invalid regex pattern: {0}")]
@@ -103,6 +107,10 @@ pub enum DriverError {
     #[error("Failed to acquire privilege level '{target}'")]
     PrivilegeAcquisitionFailed { target: String },
 
+    /// Invalid configuration in the driver builder
+    #[error("Invalid configuration: {message}")]
+    InvalidConfig { message: String },
+
     /// Unknown privilege level detected
     #[error("Unknown privilege level from prompt: '{prompt}'")]
     UnknownPrivilege { prompt: String },
@@ -115,17 +123,9 @@ pub enum DriverError {
 /// Platform/vendor definition errors.
 #[derive(Error, Debug)]
 pub enum PlatformError {
-    /// Unknown platform name
-    #[error("Unknown platform: '{name}'")]
-    UnknownPlatform { name: String },
-
     /// Invalid platform definition
     #[error("Invalid platform definition: {message}")]
     InvalidDefinition { message: String },
-
-    /// Platform already registered
-    #[error("Platform '{name}' already registered")]
-    AlreadyRegistered { name: String },
 }
 
 /// Result type alias using ferrissh's Error.

@@ -35,7 +35,7 @@ tokio = { version = "1", features = ["full"] }
 ## Quick Start
 
 ```rust
-use ferrissh::{Driver, DriverBuilder};
+use ferrissh::{Driver, DriverBuilder, Platform};
 
 #[tokio::main]
 async fn main() -> Result<(), ferrissh::Error> {
@@ -43,9 +43,8 @@ async fn main() -> Result<(), ferrissh::Error> {
     let mut driver = DriverBuilder::new("192.168.1.1")
         .username("admin")
         .password("secret")
-        .platform("linux")
-        .build()
-        .await?;
+        .platform(Platform::Linux)
+        .build()?;
 
     driver.open().await?;
 
@@ -72,14 +71,13 @@ async fn main() -> Result<(), ferrissh::Error> {
 ### Basic Commands
 
 ```rust
-use ferrissh::{Driver, DriverBuilder};
+use ferrissh::{Driver, DriverBuilder, Platform};
 
 let mut driver = DriverBuilder::new("router.example.com")
     .username("admin")
     .password("secret")
-    .platform("juniper")
-    .build()
-    .await?;
+    .platform(Platform::JuniperJunos)
+    .build()?;
 
 driver.open().await?;
 
@@ -109,9 +107,8 @@ use std::path::PathBuf;
 let driver = DriverBuilder::new("192.168.1.1")
     .username("admin")
     .private_key(PathBuf::from("~/.ssh/id_rsa"))
-    .platform("linux")
-    .build()
-    .await?;
+    .platform(Platform::Linux)
+    .build()?;
 ```
 
 ### Configuration Mode
@@ -143,12 +140,12 @@ use ferrissh::{InteractiveBuilder, InteractiveEvent};
 // Using the builder (fluent API)
 let events = InteractiveBuilder::new()
     .send("reload")
-    .expect(r"Proceed with reload\? \[confirm\]")
+    .expect(r"Proceed with reload\? \[confirm\]")?
     .send("y")
-    .expect(r"#")
+    .expect(r"#")?
     .build();
 
-let result = driver.send_interactive(events).await?;
+let result = driver.send_interactive(&events).await?;
 
 if result.failed {
     eprintln!("Interactive command failed!");
@@ -157,9 +154,9 @@ if result.failed {
 // With hidden input (passwords)
 let events = InteractiveBuilder::new()
     .send("enable")
-    .expect(r"[Pp]assword:")
+    .expect(r"[Pp]assword:")?
     .send_hidden("secret_password")  // Won't appear in logs
-    .expect(r"#")
+    .expect(r"#")?
     .build();
 ```
 
@@ -189,10 +186,9 @@ use std::time::Duration;
 let driver = DriverBuilder::new("slow-device.example.com")
     .username("admin")
     .password("secret")
-    .platform("juniper")
+    .platform(Platform::JuniperJunos)
     .timeout(Duration::from_secs(60))  // 60 second timeout
-    .build()
-    .await?;
+    .build()?;
 ```
 
 ### Error Handling
@@ -226,6 +222,8 @@ pub struct Response {
 ## Parsing Output with TextFSM
 
 For structured data extraction from CLI output, ferrissh works well with [textfsm-rust](https://crates.io/crates/textfsm-rust) - a Rust implementation of Google's TextFSM.
+
+### As dictionaries
 
 ```rust
 use ferrissh::{Driver, DriverBuilder};
@@ -262,6 +260,38 @@ for record in records {
 }
 ```
 
+### Into typed structs (serde)
+
+With the `serde` feature enabled, parse directly into strongly-typed Rust structs:
+
+```toml
+[dependencies]
+textfsm-rust = { version = "0.3", features = ["serde"] }
+```
+
+```rust
+use serde::Deserialize;
+use textfsm_rust::Template;
+
+#[derive(Debug, Deserialize)]
+struct DiskUsage {
+    filesystem: String,
+    size: String,
+    used: String,
+    available: String,
+    usepercent: String,
+    mountedon: String,
+}
+
+let template = Template::parse_str(DF_TEMPLATE)?;
+let mut parser = template.parser();
+let disks: Vec<DiskUsage> = parser.parse_text_into(&response.result)?;
+
+for disk in &disks {
+    println!("{} is {}% full", disk.mountedon, disk.usepercent);
+}
+```
+
 See the [textfsm_parsing example](ferrissh/examples/textfsm_parsing.rs) for a complete demonstration with templates for Linux and Juniper commands.
 
 ## Adding Custom Platforms
@@ -291,8 +321,7 @@ let driver = DriverBuilder::new("device.example.com")
     .custom_platform(platform)
     .username("admin")
     .password("secret")
-    .build()
-    .await?;
+    .build()?;
 ```
 
 ## Running the Examples
@@ -390,13 +419,13 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 | Crate | Purpose |
 |-------|---------|
 | `russh` | SSH client library |
-| `russh-keys` | SSH key handling |
+| `ssh-key` | SSH key handling |
 | `tokio` | Async runtime |
-| `async-trait` | Async trait support |
 | `regex` | Pattern matching |
-| `bytes` | Efficient byte buffers |
 | `thiserror` | Error handling |
 | `log` | Logging facade |
+| `serde` | Serialization/deserialization |
+| `indexmap` | Deterministic-order maps |
 | `strip-ansi-escapes` | ANSI escape code removal |
 
 

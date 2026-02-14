@@ -1,8 +1,9 @@
 //! Platform definition for vendor-specific configurations.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+use indexmap::IndexMap;
 
 use super::privilege_level::PrivilegeLevel;
 use super::VendorBehavior;
@@ -17,7 +18,7 @@ pub struct PlatformDefinition {
     pub name: String,
 
     /// Privilege levels for this platform.
-    pub privilege_levels: HashMap<String, PrivilegeLevel>,
+    pub privilege_levels: IndexMap<String, PrivilegeLevel>,
 
     /// Default privilege level after connection.
     pub default_privilege: String,
@@ -27,6 +28,9 @@ pub struct PlatformDefinition {
 
     /// Commands to run when connection is established.
     pub on_open_commands: Vec<String>,
+
+    /// Commands to run before connection is closed.
+    pub on_close_commands: Vec<String>,
 
     /// Terminal width for PTY.
     pub terminal_width: u32,
@@ -43,10 +47,11 @@ impl PlatformDefinition {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            privilege_levels: HashMap::new(),
+            privilege_levels: IndexMap::new(),
             default_privilege: String::new(),
             failed_when_contains: vec![],
             on_open_commands: vec![],
+            on_close_commands: vec![],
             terminal_width: 511,
             terminal_height: 24,
             behavior: None,
@@ -55,9 +60,6 @@ impl PlatformDefinition {
 
     /// Add a privilege level.
     pub fn with_privilege(mut self, level: PrivilegeLevel) -> Self {
-        if self.default_privilege.is_empty() {
-            self.default_privilege = level.name.clone();
-        }
         self.privilege_levels.insert(level.name.clone(), level);
         self
     }
@@ -80,6 +82,12 @@ impl PlatformDefinition {
         self
     }
 
+    /// Add an on_close command.
+    pub fn with_on_close_command(mut self, command: impl Into<String>) -> Self {
+        self.on_close_commands.push(command.into());
+        self
+    }
+
     /// Set terminal dimensions.
     pub fn with_terminal_size(mut self, width: u32, height: u32) -> Self {
         self.terminal_width = width;
@@ -99,12 +107,6 @@ impl PlatformDefinition {
     }
 }
 
-impl Default for PlatformDefinition {
-    fn default() -> Self {
-        Self::new("unknown")
-    }
-}
-
 impl fmt::Debug for PlatformDefinition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PlatformDefinition")
@@ -113,6 +115,7 @@ impl fmt::Debug for PlatformDefinition {
             .field("default_privilege", &self.default_privilege)
             .field("failed_when_contains", &self.failed_when_contains)
             .field("on_open_commands", &self.on_open_commands)
+            .field("on_close_commands", &self.on_close_commands)
             .field("terminal_width", &self.terminal_width)
             .field("terminal_height", &self.terminal_height)
             .field("behavior", &self.behavior.as_ref().map(|_| "<VendorBehavior>"))

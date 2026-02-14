@@ -24,7 +24,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ferrissh::{Driver, DriverBuilder};
+use ferrissh::{Driver, DriverBuilder, Platform};
 use serde::{Deserialize, Serialize};
 use textfsm_rust::Template;
 
@@ -85,11 +85,6 @@ impl ProcessInfo {
     /// Get CPU usage as a number
     fn cpu_percent(&self) -> Option<f32> {
         self.cpu.parse().ok()
-    }
-
-    /// Get memory usage as a number
-    fn mem_percent(&self) -> Option<f32> {
-        self.mem.parse().ok()
     }
 }
 
@@ -155,7 +150,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = DriverBuilder::new(&args.host)
         .port(args.port)
         .username(&args.user)
-        .platform(&args.platform)
+        .platform(match args.platform.as_str() {
+            "linux" => Platform::Linux,
+            "juniper" | "juniper_junos" => Platform::JuniperJunos,
+            other => {
+                eprintln!("Unknown platform: {other}");
+                std::process::exit(1);
+            }
+        })
         .timeout(Duration::from_secs(args.timeout));
 
     if let Some(password) = &args.password {
@@ -167,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let mut driver = builder.build().await?;
+    let mut driver = builder.build()?;
 
     // Connect
     driver.open().await?;
@@ -202,7 +204,7 @@ async fn run_linux_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std:
     println!("{}", "=".repeat(60));
 
     let response = driver.send_command("uname -a").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         println!("\nRaw output: {}", response.result.trim());
@@ -232,7 +234,7 @@ async fn run_linux_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std:
     println!("{}", "=".repeat(60));
 
     let response = driver.send_command("df -h").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         println!("\nRaw output (first 10 lines):");
@@ -284,7 +286,7 @@ async fn run_linux_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std:
     println!("{}", "=".repeat(60));
 
     let response = driver.send_command("ps aux | head -20").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         let template = Template::parse_str(LINUX_PS_TEMPLATE)?;
@@ -337,7 +339,7 @@ async fn run_juniper_examples(driver: &mut impl Driver) -> Result<(), Box<dyn st
     println!("{}", "=".repeat(60));
 
     let response = driver.send_command("show version").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         println!("\nRaw output (first 15 lines):");
@@ -376,7 +378,7 @@ async fn run_juniper_examples(driver: &mut impl Driver) -> Result<(), Box<dyn st
     println!("{}", "=".repeat(60));
 
     let response = driver.send_command("show interfaces terse").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         let template = Template::parse_str(JUNIPER_INTERFACES_TEMPLATE)?;

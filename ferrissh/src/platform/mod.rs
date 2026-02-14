@@ -5,63 +5,61 @@
 
 mod definition;
 mod privilege_level;
-mod registry;
 pub mod vendors;
 
 pub use definition::PlatformDefinition;
 pub use privilege_level::PrivilegeLevel;
-pub use registry::PlatformRegistry;
 
-use async_trait::async_trait;
-
-use crate::driver::GenericDriver;
-use crate::error::Result;
-
-/// Trait for vendor-specific behavior.
-#[async_trait]
-pub trait VendorBehavior: Send + Sync {
-    /// Called after connection is established.
-    async fn on_open(&self, driver: &mut GenericDriver) -> Result<()>;
-
-    /// Called before connection is closed.
-    async fn on_close(&self, driver: &mut GenericDriver) -> Result<()>;
-
-    /// Normalize command output (strip command echo, trailing prompt).
-    fn normalize_output(&self, raw: &str, command: &str) -> String;
-
-    /// Detect command failure from output.
-    fn detect_failure(&self, output: &str) -> Option<String>;
+/// Built-in platform selection.
+///
+/// Use this enum to select a built-in platform or provide a custom one.
+///
+/// # Example
+///
+/// ```rust
+/// use ferrissh::Platform;
+///
+/// // Built-in platform
+/// let platform = Platform::Linux;
+///
+/// // Custom platform
+/// use ferrissh::PlatformDefinition;
+/// let custom = Platform::Custom(PlatformDefinition::new("my_device"));
+/// ```
+#[derive(Debug, Clone)]
+pub enum Platform {
+    /// Standard Linux/Unix shell.
+    Linux,
+    /// Juniper JUNOS.
+    JuniperJunos,
+    /// User-provided platform definition.
+    Custom(PlatformDefinition),
 }
 
-/// Default vendor behavior implementation.
-pub struct DefaultBehavior;
-
-#[async_trait]
-impl VendorBehavior for DefaultBehavior {
-    async fn on_open(&self, _driver: &mut GenericDriver) -> Result<()> {
-        Ok(())
-    }
-
-    async fn on_close(&self, _driver: &mut GenericDriver) -> Result<()> {
-        Ok(())
-    }
-
-    fn normalize_output(&self, raw: &str, command: &str) -> String {
-        // Strip command echo from the beginning
-        let output = raw
-            .strip_prefix(command)
-            .unwrap_or(raw)
-            .trim_start_matches(['\r', '\n']);
-
-        // Strip trailing prompt (last line)
-        if let Some(pos) = output.rfind('\n') {
-            output[..pos].to_string()
-        } else {
-            output.to_string()
+impl From<Platform> for PlatformDefinition {
+    fn from(p: Platform) -> Self {
+        match p {
+            Platform::Linux => vendors::linux::platform(),
+            Platform::JuniperJunos => vendors::juniper::platform(),
+            Platform::Custom(def) => def,
         }
     }
+}
 
-    fn detect_failure(&self, _output: &str) -> Option<String> {
-        None
+/// Trait for vendor-specific output post-processing.
+///
+/// Most vendor differences are handled by `PlatformDefinition` data fields
+/// (on_open_commands, failed_when_contains, etc.). The driver handles
+/// universal output normalization (stripping command echo and trailing prompt).
+///
+/// This trait is only needed for vendors with genuinely unique output formats,
+/// like Juniper's `[edit]` context lines. Most platforms don't need it.
+pub trait VendorBehavior: Send + Sync {
+    /// Post-process output after universal stripping has been applied.
+    ///
+    /// The input has already had the command echo and trailing prompt removed.
+    /// Use this for vendor-specific cleanup (e.g., filtering `[edit]` lines).
+    fn post_process_output(&self, output: &str) -> String {
+        output.to_string()
     }
 }

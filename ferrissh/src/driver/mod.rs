@@ -15,12 +15,9 @@ pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, I
 pub use privilege::PrivilegeManager;
 pub use response::Response;
 
-use async_trait::async_trait;
-
 use crate::error::Result;
 
 /// Trait for device drivers.
-#[async_trait]
 pub trait Driver: Send + Sync {
     /// Open the connection to the device.
     async fn open(&mut self) -> Result<()>;
@@ -32,7 +29,13 @@ pub trait Driver: Send + Sync {
     async fn send_command(&mut self, command: &str) -> Result<Response>;
 
     /// Send multiple commands sequentially.
-    async fn send_commands(&mut self, commands: &[&str]) -> Result<Vec<Response>>;
+    async fn send_commands(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
+        let mut responses = Vec::with_capacity(commands.len());
+        for cmd in commands {
+            responses.push(self.send_command(cmd).await?);
+        }
+        Ok(responses)
+    }
 
     /// Send an interactive command sequence.
     ///
@@ -47,14 +50,14 @@ pub trait Driver: Send + Sync {
     /// # async fn example(driver: &mut impl Driver) -> Result<(), ferrissh::Error> {
     /// // Handle a reload command
     /// let events = vec![
-    ///     InteractiveEvent::new("reload", r"Proceed.*\[confirm\]"),
-    ///     InteractiveEvent::new("y", r"#"),
+    ///     InteractiveEvent::new("reload", r"Proceed.*\[confirm\]").unwrap(),
+    ///     InteractiveEvent::new("y", r"#").unwrap(),
     /// ];
-    /// let result = driver.send_interactive(events).await?;
+    /// let result = driver.send_interactive(&events).await?;
     /// # Ok(())
     /// # }
     /// ```
-    async fn send_interactive(&mut self, events: Vec<InteractiveEvent>) -> Result<InteractiveResult>;
+    async fn send_interactive(&mut self, events: &[InteractiveEvent]) -> Result<InteractiveResult>;
 
     /// Send commands in configuration mode.
     ///

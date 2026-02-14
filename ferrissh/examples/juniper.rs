@@ -23,7 +23,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ferrissh::{Driver, DriverBuilder};
+use ferrissh::{Driver, DriverBuilder, Platform};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = DriverBuilder::new(&args.host)
         .port(args.port)
         .username(&args.user)
-        .platform("juniper")  // or "juniper_junos"
+        .platform(Platform::JuniperJunos)
         .timeout(Duration::from_secs(args.timeout));
 
     if let Some(password) = &args.password {
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let mut driver = builder.build().await?;
+    let mut driver = builder.build()?;
 
     // Connect
     driver.open().await?;
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show system information
     println!("Executing: show version");
     let response = driver.send_command("show version").await?;
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Command failed: {:?}", response.failure_message);
     } else {
         // Print first 10 lines to keep output manageable
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show chassis hardware
     println!("Executing: show chassis hardware");
     let response = driver.send_command("show chassis hardware").await?;
-    if !response.failed {
+    if response.is_success() {
         let lines: Vec<&str> = response.result.lines().take(15).collect();
         println!("{}", lines.join("\n"));
         if response.result.lines().count() > 15 {
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show interfaces terse
     println!("Executing: show interfaces terse");
     let response = driver.send_command("show interfaces terse").await?;
-    if !response.failed {
+    if response.is_success() {
         let lines: Vec<&str> = response.result.lines().take(20).collect();
         println!("{}", lines.join("\n"));
         if response.result.lines().count() > 20 {
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
 
         for response in &responses {
-            if response.failed {
+            if !response.is_success() {
                 eprintln!("Config command failed: {:?}", response.failure_message);
             } else {
                 println!("Uncommitted changes:\n{}", response.result);
@@ -144,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (cmd, response) in commands.iter().zip(responses.iter()) {
         println!("\n> {}", cmd);
         println!("{}", "-".repeat(40));
-        if response.failed {
+        if !response.is_success() {
             eprintln!("Failed: {:?}", response.failure_message);
         } else {
             println!("{}", response.result);

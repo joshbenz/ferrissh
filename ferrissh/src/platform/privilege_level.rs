@@ -25,10 +25,8 @@ pub struct PrivilegeLevel {
     /// Command to de-escalate FROM this level to the parent.
     pub deescalate_command: Option<String>,
 
-    /// Whether escalation requires authentication (password).
-    pub escalate_auth: bool,
-
-    /// Pattern to match the authentication prompt (if escalate_auth is true).
+    /// Pattern to match the authentication prompt during escalation.
+    /// If `Some`, escalation requires authentication.
     pub escalate_prompt: Option<Regex>,
 
     /// Strings that must NOT be in the prompt for this level to match.
@@ -45,7 +43,6 @@ impl PrivilegeLevel {
             previous_priv: None,
             escalate_command: None,
             deescalate_command: None,
-            escalate_auth: false,
             escalate_prompt: None,
             not_contains: vec![],
         })
@@ -71,7 +68,6 @@ impl PrivilegeLevel {
 
     /// Set that escalation requires authentication.
     pub fn with_auth(mut self, prompt_pattern: &str) -> Result<Self, regex::Error> {
-        self.escalate_auth = true;
         self.escalate_prompt = Some(Regex::new(prompt_pattern)?);
         Ok(self)
     }
@@ -96,17 +92,3 @@ impl PrivilegeLevel {
     }
 }
 
-impl Default for PrivilegeLevel {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            pattern: Regex::new(r"[$#>]\s*$").unwrap(),
-            previous_priv: None,
-            escalate_command: None,
-            deescalate_command: None,
-            escalate_auth: false,
-            escalate_prompt: None,
-            not_contains: vec![],
-        }
-    }
-}
