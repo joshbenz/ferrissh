@@ -414,6 +414,29 @@ RUST_LOG=debug cargo run --example basic_ls -- --host localhost --user admin --k
 
 Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
+## Planned Features
+
+### Platform Support
+
+- [ ] Juniper JUNOS (in progress)
+- [ ] Nokia SR OS
+- [ ] Arista EOS
+- [ ] Arrcus ArcOS
+
+### Macros & Compile-Time Safety
+
+- [ ] Proc macro for defining custom platforms declaratively
+- [ ] Compile-time privilege graph validation
+- [ ] Compile-time regex verification for prompt patterns
+
+### Transport
+
+- [ ] Feature-gated `async_ssh2_lite` backend
+
+### API
+
+- [ ] Streaming output API
+
 ## Dependencies
 
 | Crate | Purpose |
