@@ -5,7 +5,6 @@
 //!
 //! For large outputs (e.g., full BGP tables), this is critical for performance.
 
-use bytes::BytesMut;
 use regex::bytes::Regex;
 
 /// Buffer for accumulating output and efficiently searching for patterns.
@@ -15,7 +14,7 @@ use regex::bytes::Regex;
 #[derive(Debug)]
 pub struct PatternBuffer {
     /// The accumulated output buffer.
-    buffer: BytesMut,
+    buffer: Vec<u8>,
 
     /// How many bytes from the end to search for patterns.
     /// Default is 1000 bytes, matching scrapli's default.
@@ -31,14 +30,9 @@ impl PatternBuffer {
     ///   Default recommendation is 1000 bytes.
     pub fn new(search_depth: usize) -> Self {
         Self {
-            buffer: BytesMut::with_capacity(4096),
+            buffer: Vec::with_capacity(4096),
             search_depth,
         }
-    }
-
-    /// Create a pattern buffer with default search depth (1000 bytes).
-    pub fn default() -> Self {
-        Self::new(1000)
     }
 
     /// Extend the buffer with new data, stripping ANSI escape codes.
@@ -80,7 +74,7 @@ impl PatternBuffer {
 
     /// Take ownership of the buffer contents and reset.
     pub fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buffer).to_vec()
+        std::mem::take(&mut self.buffer)
     }
 
     /// Get a reference to the buffer contents.
