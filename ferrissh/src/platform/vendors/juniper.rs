@@ -44,12 +44,14 @@ pub fn platform() -> PlatformDefinition {
 
     // Configuration mode - "#" prompt
     // Matches: user@router#, {master:0}[edit]user@router#, [edit interfaces]user@router#
-    let configuration =
-        PrivilegeLevel::new("configuration", r"(?:\{[^}]+\})?(?:\[edit[^\]]*\]\s*)?[\w.\-@]+#\s*$")
-            .unwrap()
-            .with_parent("exec")
-            .with_escalate("configure")
-            .with_deescalate("exit configuration-mode");
+    let configuration = PrivilegeLevel::new(
+        "configuration",
+        r"(?:\{[^}]+\})?(?:\[edit[^\]]*\]\s*)?[\w.\-@]+#\s*$",
+    )
+    .unwrap()
+    .with_parent("exec")
+    .with_escalate("configure")
+    .with_deescalate("exit configuration-mode");
 
     // Shell mode - "%" prompt
     // Matches: user@router%, root@router:RE:0%
@@ -134,7 +136,11 @@ mod tests {
         // With [edit] context
         assert!(config.pattern.is_match(b"[edit]user@router# "));
         assert!(config.pattern.is_match(b"[edit interfaces]user@router#"));
-        assert!(config.pattern.is_match(b"[edit protocols bgp]admin@mx960# "));
+        assert!(
+            config
+                .pattern
+                .is_match(b"[edit protocols bgp]admin@mx960# ")
+        );
 
         // With routing engine indicator
         assert!(config.pattern.is_match(b"{master:0}[edit]user@router# "));
@@ -203,20 +209,35 @@ mod tests {
         assert_eq!(behavior.post_process_output(output), "ge-0/0/0");
     }
 
-
     #[test]
     fn test_on_open_commands() {
         let platform = platform();
         assert_eq!(platform.on_open_commands.len(), 2);
-        assert!(platform.on_open_commands.contains(&"set cli screen-length 0".to_string()));
-        assert!(platform.on_open_commands.contains(&"set cli screen-width 511".to_string()));
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"set cli screen-length 0".to_string())
+        );
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"set cli screen-width 511".to_string())
+        );
     }
 
     #[test]
     fn test_failed_when_contains() {
         let platform = platform();
         assert!(!platform.failed_when_contains.is_empty());
-        assert!(platform.failed_when_contains.contains(&"syntax error".to_string()));
-        assert!(platform.failed_when_contains.contains(&"unknown command".to_string()));
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"syntax error".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"unknown command".to_string())
+        );
     }
 }

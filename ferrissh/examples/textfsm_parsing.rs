@@ -117,13 +117,11 @@ struct JuniperInterface {
 
 impl JuniperInterface {
     fn is_up(&self) -> bool {
-        self.admin_status.as_deref() == Some("up")
-            && self.link_status.as_deref() == Some("up")
+        self.admin_status.as_deref() == Some("up") && self.link_status.as_deref() == Some("up")
     }
 
     fn is_down(&self) -> bool {
-        self.admin_status.as_deref() == Some("down")
-            || self.link_status.as_deref() == Some("down")
+        self.admin_status.as_deref() == Some("down") || self.link_status.as_deref() == Some("down")
     }
 }
 
@@ -135,7 +133,8 @@ const LINUX_UNAME_TEMPLATE: &str = include_str!("templates/linux_uname.textfsm")
 const LINUX_DF_TEMPLATE: &str = include_str!("templates/linux_df.textfsm");
 const LINUX_PS_TEMPLATE: &str = include_str!("templates/linux_ps.textfsm");
 const JUNIPER_VERSION_TEMPLATE: &str = include_str!("templates/juniper_show_version.textfsm");
-const JUNIPER_INTERFACES_TEMPLATE: &str = include_str!("templates/juniper_show_interfaces_terse.textfsm");
+const JUNIPER_INTERFACES_TEMPLATE: &str =
+    include_str!("templates/juniper_show_interfaces_terse.textfsm");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -144,7 +143,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     println!("=== Ferrissh + TextFSM Parsing Example ===\n");
-    println!("Connecting to {}:{} (platform: {})...", args.host, args.port, args.platform);
+    println!(
+        "Connecting to {}:{} (platform: {})...",
+        args.host, args.port, args.platform
+    );
 
     // Build the driver
     let mut builder = DriverBuilder::new(&args.host)
@@ -261,11 +263,7 @@ async fn run_linux_examples(driver: &mut impl Driver) -> Result<(), Box<dyn std:
             for disk in high_usage {
                 println!(
                     "  {} - {}% used ({} of {}) mounted on {}",
-                    disk.filesystem,
-                    disk.use_percent,
-                    disk.used,
-                    disk.size,
-                    disk.mounted_on
+                    disk.filesystem, disk.use_percent, disk.used, disk.size, disk.mounted_on
                 );
             }
         }

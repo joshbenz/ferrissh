@@ -63,7 +63,15 @@ mod tests {
     fn test_failed_when_contains() {
         let platform = platform();
         assert!(!platform.failed_when_contains.is_empty());
-        assert!(platform.failed_when_contains.contains(&"command not found".to_string()));
-        assert!(platform.failed_when_contains.contains(&"Permission denied".to_string()));
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"command not found".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"Permission denied".to_string())
+        );
     }
 }

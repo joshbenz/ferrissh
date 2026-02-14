@@ -91,4 +91,3 @@ impl PrivilegeLevel {
         self.pattern.is_match(prompt.as_bytes())
     }
 }
-

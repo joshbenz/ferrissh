@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use regex::bytes::Regex;
 use russh::Channel;
-use russh::client::Msg;
 use russh::ChannelMsg;
+use russh::client::Msg;
 
 use super::buffer::PatternBuffer;
 use crate::error::{ChannelError, Result};
@@ -19,9 +19,7 @@ pub struct PtyConfig {
 
 impl Default for PtyConfig {
     fn default() -> Self {
-        Self {
-            search_depth: 1000,
-        }
+        Self { search_depth: 1000 }
     }
 }
 
@@ -109,5 +107,4 @@ impl PtyChannel {
     pub fn take_buffer(&mut self) -> Vec<u8> {
         self.buffer.take()
     }
-
 }

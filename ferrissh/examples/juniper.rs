@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Entering configuration mode...");
         let responses = driver
             .send_config(&[
-                "show | compare",  // Show any uncommitted changes
+                "show | compare", // Show any uncommitted changes
             ])
             .await?;
 
@@ -133,10 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Multiple Commands ---
     println!("--- Batch Commands ---\n");
 
-    let commands = [
-        "show system uptime",
-        "show system users",
-    ];
+    let commands = ["show system uptime", "show system users"];
 
     println!("Executing {} commands...", commands.len());
     let responses = driver.send_commands(&commands).await?;

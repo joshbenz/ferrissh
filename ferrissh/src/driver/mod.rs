@@ -31,7 +31,10 @@ pub trait Driver: Send + Sync {
     fn send_command(&mut self, command: &str) -> impl Future<Output = Result<Response>> + Send;
 
     /// Send multiple commands sequentially.
-    fn send_commands(&mut self, commands: &[&str]) -> impl Future<Output = Result<Vec<Response>>> + Send {
+    fn send_commands(
+        &mut self,
+        commands: &[&str],
+    ) -> impl Future<Output = Result<Vec<Response>>> + Send {
         async move {
             let mut responses = Vec::with_capacity(commands.len());
             for cmd in commands {
@@ -61,7 +64,10 @@ pub trait Driver: Send + Sync {
     /// # Ok(())
     /// # }
     /// ```
-    fn send_interactive(&mut self, events: &[InteractiveEvent]) -> impl Future<Output = Result<InteractiveResult>> + Send;
+    fn send_interactive(
+        &mut self,
+        events: &[InteractiveEvent],
+    ) -> impl Future<Output = Result<InteractiveResult>> + Send;
 
     /// Send commands in configuration mode.
     ///
@@ -84,7 +90,10 @@ pub trait Driver: Send + Sync {
     /// # Ok(())
     /// # }
     /// ```
-    fn send_config(&mut self, commands: &[&str]) -> impl Future<Output = Result<Vec<Response>>> + Send;
+    fn send_config(
+        &mut self,
+        commands: &[&str],
+    ) -> impl Future<Output = Result<Vec<Response>>> + Send;
 
     /// Acquire a specific privilege level.
     fn acquire_privilege(&mut self, privilege: &str) -> impl Future<Output = Result<()>> + Send;

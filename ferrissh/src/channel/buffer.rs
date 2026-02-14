@@ -101,7 +101,6 @@ impl PatternBuffer {
     pub fn search_depth(&self) -> usize {
         self.search_depth
     }
-
 }
 
 impl Default for PatternBuffer {

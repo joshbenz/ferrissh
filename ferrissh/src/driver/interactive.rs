@@ -94,7 +94,6 @@ pub struct InteractiveResult {
 
     /// Total time for the entire sequence.
     pub elapsed: Duration,
-
 }
 
 impl InteractiveResult {
@@ -302,9 +301,11 @@ mod tests {
     fn test_interactive_builder() {
         let events = InteractiveBuilder::new()
             .send("reload")
-            .expect(r"confirm").unwrap()
+            .expect(r"confirm")
+            .unwrap()
             .send("y")
-            .expect(r"#").unwrap()
+            .expect(r"#")
+            .unwrap()
             .build();
 
         assert_eq!(events.len(), 2);
@@ -316,9 +317,11 @@ mod tests {
     fn test_interactive_builder_with_hidden() {
         let events = InteractiveBuilder::new()
             .send("enable")
-            .expect(r"[Pp]assword").unwrap()
+            .expect(r"[Pp]assword")
+            .unwrap()
             .send_hidden("secret")
-            .expect(r"#").unwrap()
+            .expect(r"#")
+            .unwrap()
             .build();
 
         assert_eq!(events.len(), 2);

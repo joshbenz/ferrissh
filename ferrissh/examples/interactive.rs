@@ -54,9 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 1: Using InteractiveEvent directly ---");
     println!("Sending 'echo hello' and waiting for prompt...\n");
 
-    let events = vec![
-        InteractiveEvent::new("echo hello", r"[$#]\s*$")?,
-    ];
+    let events = vec![InteractiveEvent::new("echo hello", r"[$#]\s*$")?];
 
     let result = driver.send_interactive(&events).await?;
 
@@ -111,7 +109,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = driver.send_interactive(&events).await?;
 
     println!("Result:");
-    println!("  Final output: {:?}", result.final_output().map(|s| s.trim()));
+    println!(
+        "  Final output: {:?}",
+        result.final_output().map(|s| s.trim())
+    );
     println!("  Failed: {}", !result.is_success());
     println!();
 

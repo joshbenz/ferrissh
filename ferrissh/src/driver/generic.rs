@@ -4,16 +4,16 @@ use std::time::{Duration, Instant};
 
 use regex::bytes::Regex;
 
+use super::Driver;
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
-use super::Driver;
 use crate::channel::{PtyChannel, PtyConfig};
 use crate::error::{DriverError, Result};
-use log::debug;
 use crate::platform::PlatformDefinition;
-use crate::transport::config::SshConfig;
 use crate::transport::SshTransport;
+use crate::transport::config::SshConfig;
+use log::debug;
 
 /// Generic driver that works with any platform definition.
 ///
@@ -110,10 +110,7 @@ impl GenericDriver {
 
     /// Read until the prompt is matched, then determine current privilege.
     async fn read_until_prompt(&mut self) -> Result<(String, String)> {
-        let channel = self
-            .channel
-            .as_mut()
-            .ok_or(DriverError::NotConnected)?;
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
 
         let data = channel
             .read_until_pattern(&self.prompt_pattern, self.timeout)
@@ -227,10 +224,7 @@ impl Driver for GenericDriver {
     }
 
     async fn send_command(&mut self, command: &str) -> Result<Response> {
-        let channel = self
-            .channel
-            .as_mut()
-            .ok_or(DriverError::NotConnected)?;
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
 
         let start = Instant::now();
 
@@ -247,7 +241,9 @@ impl Driver for GenericDriver {
 
         // Find the prompt
         let prompt = if let Some(m) = self.prompt_pattern.find(&data) {
-            String::from_utf8_lossy(&data[m.start()..]).trim().to_string()
+            String::from_utf8_lossy(&data[m.start()..])
+                .trim()
+                .to_string()
         } else {
             String::new()
         };
@@ -310,10 +306,7 @@ impl Driver for GenericDriver {
                 })?;
 
             // Send the transition command
-            let channel = self
-                .channel
-                .as_mut()
-                .ok_or(DriverError::NotConnected)?;
+            let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
 
             channel.send(&transition.command).await?;
 
@@ -325,7 +318,9 @@ impl Driver for GenericDriver {
                     .await?;
 
                 // Send password (from auth method)
-                if let crate::transport::config::AuthMethod::Password(ref pwd) = self.ssh_config.auth {
+                if let crate::transport::config::AuthMethod::Password(ref pwd) =
+                    self.ssh_config.auth
+                {
                     channel.send(pwd).await?;
                 }
             }
@@ -338,10 +333,9 @@ impl Driver for GenericDriver {
                 let level_name = level.name.clone();
                 self.privilege_manager.set_current(&level_name)?;
                 if level_name != *to {
-                    return Err(DriverError::PrivilegeAcquisitionFailed {
-                        target: to.clone(),
-                    }
-                    .into());
+                    return Err(
+                        DriverError::PrivilegeAcquisitionFailed { target: to.clone() }.into(),
+                    );
                 }
             }
         }
@@ -366,17 +360,12 @@ impl Driver for GenericDriver {
 
             // Borrow channel for I/O, then release before normalize_output
             let (data, step_elapsed) = {
-                let channel = self
-                    .channel
-                    .as_mut()
-                    .ok_or(DriverError::NotConnected)?;
+                let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
 
                 channel.send(&event.input).await?;
 
                 let timeout = event.timeout.unwrap_or(self.timeout);
-                let data = channel
-                    .read_until_pattern(&event.pattern, timeout)
-                    .await?;
+                let data = channel.read_until_pattern(&event.pattern, timeout).await?;
 
                 (data, step_start.elapsed())
             };
@@ -428,10 +417,7 @@ impl Driver for GenericDriver {
 
     async fn send_config(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
         // Save current privilege level
-        let original_privilege = self
-            .privilege_manager
-            .current()
-            .map(|l| l.name.clone());
+        let original_privilege = self.privilege_manager.current().map(|l| l.name.clone());
 
         // Find the configuration privilege level
         // Look for a level with "config" in the name, or use platform's default
@@ -468,8 +454,6 @@ impl Driver for GenericDriver {
     }
 
     fn current_privilege(&self) -> Option<&str> {
-        self.privilege_manager
-            .current()
-            .map(|l| l.name.as_str())
+        self.privilege_manager.current().map(|l| l.name.as_str())
     }
 }

@@ -55,8 +55,14 @@ impl PrivilegeManager {
 
             // Add bidirectional edge to parent
             if let Some(ref parent) = level.previous_priv {
-                graph.entry(name.clone()).or_default().insert(parent.clone());
-                graph.entry(parent.clone()).or_default().insert(name.clone());
+                graph
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(parent.clone());
+                graph
+                    .entry(parent.clone())
+                    .or_default()
+                    .insert(name.clone());
             }
         }
 
@@ -69,11 +75,7 @@ impl PrivilegeManager {
 
         for level in self.levels.values() {
             // Check not_contains patterns first
-            if level
-                .not_contains
-                .iter()
-                .any(|nc| prompt.contains(nc))
-            {
+            if level.not_contains.iter().any(|nc| prompt.contains(nc)) {
                 continue;
             }
 

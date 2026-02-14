@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use super::privilege_level::PrivilegeLevel;
 use super::VendorBehavior;
+use super::privilege_level::PrivilegeLevel;
 
 /// Platform definition containing all vendor-specific configuration.
 ///
@@ -118,7 +118,10 @@ impl fmt::Debug for PlatformDefinition {
             .field("on_close_commands", &self.on_close_commands)
             .field("terminal_width", &self.terminal_width)
             .field("terminal_height", &self.terminal_height)
-            .field("behavior", &self.behavior.as_ref().map(|_| "<VendorBehavior>"))
+            .field(
+                "behavior",
+                &self.behavior.as_ref().map(|_| "<VendorBehavior>"),
+            )
             .finish()
     }
 }

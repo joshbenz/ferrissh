@@ -138,9 +138,11 @@ impl DriverBuilder {
             .into());
         }
 
-        let platform = self.platform.ok_or_else(|| PlatformError::InvalidDefinition {
-            message: "Platform must be specified".to_string(),
-        })?;
+        let platform = self
+            .platform
+            .ok_or_else(|| PlatformError::InvalidDefinition {
+                message: "Platform must be specified".to_string(),
+            })?;
         let platform = PlatformDefinition::from(platform);
 
         let ssh_config = SshConfig {
@@ -155,6 +157,10 @@ impl DriverBuilder {
             known_hosts_path: None,
         };
 
-        Ok(GenericDriver::new(ssh_config, platform, self.normalize_output))
+        Ok(GenericDriver::new(
+            ssh_config,
+            platform,
+            self.normalize_output,
+        ))
     }
 }
