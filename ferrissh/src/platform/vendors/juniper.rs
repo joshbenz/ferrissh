@@ -53,7 +53,6 @@ use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 /// Uses `(?mi)` flags for multiline (^ matches line start) and case-insensitive matching.
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode - ">" prompt
-    // scrapli: r"^({\w+(:(\w+){0,1}\d){0,1}}\n){0,1}[\w\-@()/:\.]{1,63}>\s?$"
     let exec = PrivilegeLevel::new(
         "exec",
         r"(?mi)^(\{\w+(:(\w+)?\d)?\}\n)?[\w\-@()/:\.]{1,63}>\s?$",
@@ -61,7 +60,6 @@ pub fn platform() -> PlatformDefinition {
     .unwrap();
 
     // Configuration mode - "#" prompt
-    // scrapli: r"^({\w+(:(\w+){0,1}\d){0,1}}\[edit\]\n){0,1}[\w\-@()/:\.]{1,63}#\s?$"
     let configuration = PrivilegeLevel::new(
         "configuration",
         r"(?mi)^(\{\w+(:(\w+)?\d)?\}\[edit\]\n)?[\w\-@()/:\.]{1,63}#\s?$",
@@ -72,7 +70,6 @@ pub fn platform() -> PlatformDefinition {
     .with_deescalate("exit configuration-mode");
 
     // Shell mode - "%" or "$" prompt (non-root)
-    // scrapli: r"^.*[%\$]\s?$"  with not_contains=["root"]
     let shell = PrivilegeLevel::new("shell", r"(?mi)^.*[%$]\s?$")
         .unwrap()
         .with_parent("exec")
@@ -81,7 +78,6 @@ pub fn platform() -> PlatformDefinition {
         .with_not_contains("root");
 
     // Root shell mode - root user "%" or "#" prompt
-    // scrapli: r"^.*root@(?:\S*:?\S*\s?)?[%\#]\s?$"
     let root_shell = PrivilegeLevel::new("root_shell", r"(?mi)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$")
         .unwrap()
         .with_parent("exec")
