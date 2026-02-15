@@ -82,16 +82,13 @@ pub fn platform() -> PlatformDefinition {
 
     // Root shell mode - root user "%" or "#" prompt
     // scrapli: r"^.*root@(?:\S*:?\S*\s?)?[%\#]\s?$"
-    let root_shell = PrivilegeLevel::new(
-        "root_shell",
-        r"(?mi)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$",
-    )
-    .unwrap()
-    .with_parent("exec")
-    .with_escalate("start shell user root")
-    .with_deescalate("exit")
-    .with_auth(r"(?i)^[pP]assword:\s?$")
-    .unwrap();
+    let root_shell = PrivilegeLevel::new("root_shell", r"(?mi)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$")
+        .unwrap()
+        .with_parent("exec")
+        .with_escalate("start shell user root")
+        .with_deescalate("exit")
+        .with_auth(r"(?i)^[pP]assword:\s?$")
+        .unwrap();
 
     PlatformDefinition::new("juniper_junos")
         .with_privilege(exec)

@@ -60,7 +60,9 @@ pub enum TransportError {
     HostKeyUnknown { host: String, port: u16 },
 
     /// Host key changed from what's recorded in known_hosts
-    #[error("Host key for {host}:{port} has CHANGED (known_hosts line {line}). This could indicate a man-in-the-middle attack.")]
+    #[error(
+        "Host key for {host}:{port} has CHANGED (known_hosts line {line}). This could indicate a man-in-the-middle attack."
+    )]
     HostKeyChanged {
         host: String,
         port: u16,

@@ -120,7 +120,11 @@ impl GenericDriver {
         let output = String::from_utf8_lossy(&data).to_string();
 
         // Find the prompt at the end (search only the tail, not the full buffer)
-        let search_depth = self.channel.as_ref().map(|c| c.search_depth()).unwrap_or(1000);
+        let search_depth = self
+            .channel
+            .as_ref()
+            .map(|c| c.search_depth())
+            .unwrap_or(1000);
         let tail_start = data.len().saturating_sub(search_depth);
         let tail = &data[tail_start..];
         let prompt = if let Some(m) = self.prompt_pattern.find(tail) {
@@ -220,7 +224,11 @@ impl Driver for GenericDriver {
         let raw_result = String::from_utf8_lossy(&data).to_string();
 
         // Find the prompt (search only the tail, not the full buffer)
-        let search_depth = self.channel.as_ref().map(|c| c.search_depth()).unwrap_or(1000);
+        let search_depth = self
+            .channel
+            .as_ref()
+            .map(|c| c.search_depth())
+            .unwrap_or(1000);
         let tail_start = data.len().saturating_sub(search_depth);
         let tail = &data[tail_start..];
         let prompt = if let Some(m) = self.prompt_pattern.find(tail) {

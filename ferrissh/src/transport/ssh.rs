@@ -164,10 +164,7 @@ impl SshHandler {
     ///
     /// Returns `Ok(true)` if matched, `Ok(false)` if host not found,
     /// `Err(TransportError::HostKeyChanged)` if key changed.
-    fn check_known_hosts(
-        &self,
-        pubkey: &PublicKey,
-    ) -> std::result::Result<bool, TransportError> {
+    fn check_known_hosts(&self, pubkey: &PublicKey) -> std::result::Result<bool, TransportError> {
         let result = if let Some(ref path) = self.known_hosts_path {
             russh::keys::check_known_hosts_path(&self.host, self.port, pubkey, path)
         } else {
@@ -176,13 +173,11 @@ impl SshHandler {
 
         match result {
             Ok(matched) => Ok(matched),
-            Err(russh::keys::Error::KeyChanged { line }) => {
-                Err(TransportError::HostKeyChanged {
-                    host: self.host.clone(),
-                    port: self.port,
-                    line,
-                })
-            }
+            Err(russh::keys::Error::KeyChanged { line }) => Err(TransportError::HostKeyChanged {
+                host: self.host.clone(),
+                port: self.port,
+                line,
+            }),
             Err(e) => Err(TransportError::KnownHosts(e.to_string())),
         }
     }
@@ -190,9 +185,7 @@ impl SshHandler {
     /// Save a new host key to known_hosts.
     fn learn_host_key(&self, pubkey: &PublicKey) -> std::result::Result<(), TransportError> {
         let result = if let Some(ref path) = self.known_hosts_path {
-            russh::keys::known_hosts::learn_known_hosts_path(
-                &self.host, self.port, pubkey, path,
-            )
+            russh::keys::known_hosts::learn_known_hosts_path(&self.host, self.port, pubkey, path)
         } else {
             russh::keys::known_hosts::learn_known_hosts(&self.host, self.port, pubkey)
         };
@@ -236,12 +229,11 @@ impl client::Handler for SshHandler {
                     Ok(true) => Ok(true),
                     Ok(false) => {
                         // Unknown host — reject in strict mode
-                        *self.host_key_error.lock().unwrap() = Some(
-                            TransportError::HostKeyUnknown {
+                        *self.host_key_error.lock().unwrap() =
+                            Some(TransportError::HostKeyUnknown {
                                 host: self.host.clone(),
                                 port: self.port,
-                            },
-                        );
+                            });
                         Ok(false)
                     }
                     Err(e) => {
