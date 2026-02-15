@@ -87,7 +87,7 @@ pub fn platform() -> PlatformDefinition {
         .with_parent("exec")
         .with_escalate("start shell user root")
         .with_deescalate("exit")
-        .with_auth(r"(?i)^[pP]assword:\s?$")
+        .with_auth(r"(?i)^password:\s?$")
         .unwrap();
 
     PlatformDefinition::new("juniper_junos")
