@@ -6,5 +6,5 @@
 pub mod config;
 mod ssh;
 
-pub use config::{AuthMethod, SshConfig};
+pub use config::{AuthMethod, HostKeyVerification, SshConfig};
 pub use ssh::SshTransport;

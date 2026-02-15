@@ -6,7 +6,7 @@ use std::time::Duration;
 use super::generic::GenericDriver;
 use crate::error::{DriverError, PlatformError, Result};
 use crate::platform::{Platform, PlatformDefinition};
-use crate::transport::config::{AuthMethod, SshConfig};
+use crate::transport::config::{AuthMethod, HostKeyVerification, SshConfig};
 
 /// Builder for constructing device drivers.
 ///
@@ -34,6 +34,8 @@ pub struct DriverBuilder {
     terminal_width: Option<u32>,
     terminal_height: Option<u32>,
     normalize_output: bool,
+    host_key_verification: HostKeyVerification,
+    known_hosts_path: Option<PathBuf>,
 }
 
 impl DriverBuilder {
@@ -49,6 +51,8 @@ impl DriverBuilder {
             terminal_width: None,
             terminal_height: None,
             normalize_output: true,
+            host_key_verification: HostKeyVerification::AcceptNew,
+            known_hosts_path: None,
         }
     }
 
@@ -114,6 +118,33 @@ impl DriverBuilder {
         self
     }
 
+    /// Set the host key verification mode (default: `AcceptNew`).
+    ///
+    /// - `Strict`: Reject unknown and changed keys
+    /// - `AcceptNew`: Accept new keys (auto-learn), reject changed keys (default)
+    /// - `Disabled`: Accept all keys (for testing only)
+    pub fn host_key_verification(mut self, mode: HostKeyVerification) -> Self {
+        self.host_key_verification = mode;
+        self
+    }
+
+    /// Set a custom known_hosts file path.
+    ///
+    /// If not set, defaults to `~/.ssh/known_hosts`.
+    pub fn known_hosts_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.known_hosts_path = Some(path.into());
+        self
+    }
+
+    /// Disable host key verification entirely.
+    ///
+    /// Equivalent to `.host_key_verification(HostKeyVerification::Disabled)`.
+    /// Only use this for testing or lab environments.
+    pub fn danger_disable_host_key_verification(mut self) -> Self {
+        self.host_key_verification = HostKeyVerification::Disabled;
+        self
+    }
+
     /// Set terminal dimensions, overriding the platform's defaults.
     pub fn terminal_size(mut self, width: u32, height: u32) -> Self {
         self.terminal_width = Some(width);
@@ -153,8 +184,8 @@ impl DriverBuilder {
             timeout: self.timeout,
             terminal_width: self.terminal_width.unwrap_or(platform.terminal_width),
             terminal_height: self.terminal_height.unwrap_or(platform.terminal_height),
-            verify_host_key: false,
-            known_hosts_path: None,
+            host_key_verification: self.host_key_verification,
+            known_hosts_path: self.known_hosts_path,
         };
 
         Ok(GenericDriver::new(

@@ -55,6 +55,22 @@ pub enum TransportError {
     #[error("Operation timed out after {0:?}")]
     Timeout(std::time::Duration),
 
+    /// Host key not found in known_hosts (strict mode)
+    #[error("Host key for {host}:{port} not found in known_hosts")]
+    HostKeyUnknown { host: String, port: u16 },
+
+    /// Host key changed from what's recorded in known_hosts
+    #[error("Host key for {host}:{port} has CHANGED (known_hosts line {line}). This could indicate a man-in-the-middle attack.")]
+    HostKeyChanged {
+        host: String,
+        port: u16,
+        line: usize,
+    },
+
+    /// Error accessing or parsing known_hosts file
+    #[error("Known hosts error: {0}")]
+    KnownHosts(String),
+
     /// I/O error
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
