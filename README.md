@@ -458,6 +458,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [scrapli](https://github.com/carlmontanari/scrapli) - Inspiration for API design and pattern buffer optimization
+The architecture and design of ferrissh is heavily influenced by [scrapli](https://github.com/carlmontanari/scrapli) — the data-driven platform definitions, privilege level graph, and pattern buffer optimization are all concepts from scrapli. If you're working in Python, check it out.
+
+- [scrapli](https://github.com/carlmontanari/scrapli) - The primary inspiration for ferrissh's architecture
 - [netmiko](https://github.com/ktbyers/netmiko) - Pioneer in network device automation
-- [russh](https://github.com/warp-tech/russh) - Excellent async SSH library for Rust
+- [russh](https://github.com/warp-tech/russh) - Async SSH library for Rust
