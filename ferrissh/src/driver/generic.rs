@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use regex::Regex as TextRegex;
 use regex::bytes::Regex;
 
 use super::Driver;
@@ -132,37 +133,13 @@ impl GenericDriver {
     ///
     /// Then apply vendor-specific post-processing if a behavior is set.
     fn normalize_output(&self, raw: &str, command: &str) -> String {
-        debug!("normalize_output: raw={:?}, command={:?}", raw, command);
-
-        // Strip command echo from the beginning.
-        // The PTY may echo the command followed by \r\n, \n, or \r,
-        // so we look for the first line and check if it matches the command.
-        let output = if let Some(pos) = raw.find('\n') {
-            let first_line = raw[..pos].trim_end_matches('\r');
-            if first_line == command {
-                &raw[pos + 1..]
-            } else {
-                raw
-            }
-        } else {
-            raw.strip_prefix(command).unwrap_or(raw)
-        };
-        let output = output.trim_start_matches(['\r', '\n']);
-
-        // Strip trailing prompt (last line)
-        let stripped = if let Some(pos) = output.rfind('\n') {
-            output[..pos].trim_end_matches('\r')
-        } else {
-            output
-        };
-
-        debug!("normalize_output: result={:?}", stripped);
+        let result = strip_echo_and_prompt(raw, command);
 
         // Apply vendor-specific post-processing if present
         if let Some(ref behavior) = self.platform.behavior {
-            behavior.post_process_output(stripped)
+            behavior.post_process_output(&result)
         } else {
-            stripped.to_string()
+            result
         }
     }
 
@@ -455,5 +432,237 @@ impl Driver for GenericDriver {
 
     fn current_privilege(&self) -> Option<&str> {
         self.privilege_manager.current().map(|l| l.name.as_str())
+    }
+}
+
+/// Normalize line endings in raw PTY output.
+///
+/// Converts `\r\n`, `\r\r\n`, `\n\r`, and standalone `\r` to `\n`.
+/// This matches the behavior of Python's netmiko and scrapli.
+fn normalize_linefeeds(raw: &str) -> String {
+    // Match any \r+\n, \n\r, or standalone \r and replace with \n
+    static RE: std::sync::LazyLock<TextRegex> =
+        std::sync::LazyLock::new(|| TextRegex::new(r"\r+\n|\n\r|\r").unwrap());
+    RE.replace_all(raw, "\n").into_owned()
+}
+
+/// Strip command echo and trailing prompt from raw PTY output.
+///
+/// This handles the universal normalization that applies to all platforms:
+/// 1. Normalize line endings (\r\n, \r → \n)
+/// 2. Remove the command echo (first line if it matches the command)
+/// 3. Remove the trailing prompt (last line)
+fn strip_echo_and_prompt(raw: &str, command: &str) -> String {
+    debug!("normalize_output: raw={:?}, command={:?}", raw, command);
+
+    // Normalize all line endings to \n
+    let normalized = normalize_linefeeds(raw);
+
+    // Strip command echo from the beginning.
+    let output = if let Some(pos) = normalized.find('\n') {
+        if &normalized[..pos] == command {
+            &normalized[pos + 1..]
+        } else {
+            &normalized[..]
+        }
+    } else {
+        normalized.strip_prefix(command).unwrap_or(&normalized)
+    };
+    let output = output.trim_start_matches('\n');
+
+    // Strip trailing prompt (last line)
+    let stripped = if let Some(pos) = output.rfind('\n') {
+        &output[..pos]
+    } else {
+        output
+    };
+
+    debug!("normalize_output: result={:?}", stripped);
+    stripped.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // Linefeed normalization
+    // =========================================================================
+
+    #[test]
+    fn test_normalize_lf_passthrough() {
+        assert_eq!(normalize_linefeeds("a\nb\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn test_normalize_crlf() {
+        assert_eq!(normalize_linefeeds("a\r\nb\r\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn test_normalize_cr_only() {
+        assert_eq!(normalize_linefeeds("a\rb\rc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn test_normalize_mixed() {
+        assert_eq!(normalize_linefeeds("a\r\nb\nc\rd"), "a\nb\nc\nd");
+    }
+
+    #[test]
+    fn test_normalize_double_cr_lf() {
+        // Some devices send \r\r\n
+        assert_eq!(normalize_linefeeds("a\r\r\nb"), "a\nb");
+    }
+
+    #[test]
+    fn test_normalize_lf_cr() {
+        assert_eq!(normalize_linefeeds("a\n\rb"), "a\nb");
+    }
+
+    // =========================================================================
+    // Echo stripping
+    // =========================================================================
+
+    #[test]
+    fn test_strip_echo_lf() {
+        let raw = "ls -la\nfile1\nfile2\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "ls -la"), "file1\nfile2");
+    }
+
+    #[test]
+    fn test_strip_echo_crlf() {
+        let raw = "ls -la\r\nfile1\r\nfile2\r\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "ls -la"), "file1\nfile2");
+    }
+
+    #[test]
+    fn test_no_echo_present() {
+        let raw = "file1\nfile2\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "ls -la"), "file1\nfile2");
+    }
+
+    #[test]
+    fn test_echo_partial_match_not_stripped() {
+        let raw = "ls -la /tmp\nfile1\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "ls -la"), "ls -la /tmp\nfile1");
+    }
+
+    // =========================================================================
+    // Prompt stripping
+    // =========================================================================
+
+    #[test]
+    fn test_strip_linux_prompt() {
+        let raw = "show version\nJUNOS 21.4R1\nuser@router> ";
+        assert_eq!(strip_echo_and_prompt(raw, "show version"), "JUNOS 21.4R1");
+    }
+
+    #[test]
+    fn test_strip_prompt_with_crlf() {
+        let raw = "pwd\r\n/home/user\r\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "pwd"), "/home/user");
+    }
+
+    // =========================================================================
+    // Single-line output
+    // =========================================================================
+
+    #[test]
+    fn test_single_line_output() {
+        let raw = "whoami\nroot\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "whoami"), "root");
+    }
+
+    #[test]
+    fn test_no_newline_at_all() {
+        let raw = "ls";
+        assert_eq!(strip_echo_and_prompt(raw, "ls"), "");
+    }
+
+    #[test]
+    fn test_only_prompt_after_echo() {
+        let raw = "ls\nuser@host:~$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "ls"), "user@host:~$ ");
+    }
+
+    // =========================================================================
+    // Multi-line output
+    // =========================================================================
+
+    #[test]
+    fn test_multiline_output() {
+        let raw = "uname -a\nLinux host 6.1.0 #1 SMP x86_64 GNU/Linux\n[user@host ~]$ ";
+        assert_eq!(
+            strip_echo_and_prompt(raw, "uname -a"),
+            "Linux host 6.1.0 #1 SMP x86_64 GNU/Linux"
+        );
+    }
+
+    #[test]
+    fn test_large_output() {
+        let mut raw = String::from("show route\n");
+        for i in 0..100 {
+            raw.push_str(&format!("10.0.{}.0/24 via 192.168.1.1\n", i));
+        }
+        raw.push_str("router> ");
+
+        let result = strip_echo_and_prompt(&raw, "show route");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 100);
+        assert_eq!(lines[0], "10.0.0.0/24 via 192.168.1.1");
+        assert_eq!(lines[99], "10.0.99.0/24 via 192.168.1.1");
+    }
+
+    // =========================================================================
+    // Real-world PTY output patterns
+    // =========================================================================
+
+    #[test]
+    fn test_real_linux_pwd() {
+        let raw = "pwd\n/home/fabioswartz\n[fabioswartz@voidstar ~]$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "pwd"), "/home/fabioswartz");
+    }
+
+    #[test]
+    fn test_real_linux_whoami() {
+        let raw = "whoami\nfabioswartz\n[fabioswartz@voidstar ~]$ ";
+        assert_eq!(strip_echo_and_prompt(raw, "whoami"), "fabioswartz");
+    }
+
+    #[test]
+    fn test_real_linux_uname() {
+        let raw = "uname -a\nLinux voidstar 6.18.3-arch1-1 #1 SMP PREEMPT_DYNAMIC Fri, 02 Jan 2026 17:52:55 +0000 x86_64 GNU/Linux\n[fabioswartz@voidstar ~]$ ";
+        assert_eq!(
+            strip_echo_and_prompt(raw, "uname -a"),
+            "Linux voidstar 6.18.3-arch1-1 #1 SMP PREEMPT_DYNAMIC Fri, 02 Jan 2026 17:52:55 +0000 x86_64 GNU/Linux"
+        );
+    }
+
+    #[test]
+    fn test_juniper_show_version() {
+        let raw = "show version\nHostname: router1\nModel: mx240\nJunos: 21.4R3-S5\nuser@router1> ";
+        assert_eq!(
+            strip_echo_and_prompt(raw, "show version"),
+            "Hostname: router1\nModel: mx240\nJunos: 21.4R3-S5"
+        );
+    }
+
+    #[test]
+    fn test_network_device_crlf() {
+        // \r\n from network devices gets normalized to \n
+        let raw =
+            "show interfaces terse\r\nge-0/0/0  up  up\r\nge-0/0/1  up  down\r\nuser@router> ";
+        assert_eq!(
+            strip_echo_and_prompt(raw, "show interfaces terse"),
+            "ge-0/0/0  up  up\nge-0/0/1  up  down"
+        );
+    }
+
+    #[test]
+    fn test_network_device_double_cr() {
+        // Some devices send \r\r\n
+        let raw = "show version\r\r\nJUNOS 21.4R1\r\r\nuser@router> ";
+        assert_eq!(strip_echo_and_prompt(raw, "show version"), "JUNOS 21.4R1");
     }
 }
