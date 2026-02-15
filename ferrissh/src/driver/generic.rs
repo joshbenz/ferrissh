@@ -119,9 +119,12 @@ impl GenericDriver {
 
         let output = String::from_utf8_lossy(&data).to_string();
 
-        // Find the prompt at the end
-        let prompt = if let Some(m) = self.prompt_pattern.find(&data) {
-            String::from_utf8_lossy(&data[m.start()..]).to_string()
+        // Find the prompt at the end (search only the tail, not the full buffer)
+        let search_depth = self.channel.as_ref().map(|c| c.search_depth()).unwrap_or(1000);
+        let tail_start = data.len().saturating_sub(search_depth);
+        let tail = &data[tail_start..];
+        let prompt = if let Some(m) = self.prompt_pattern.find(tail) {
+            String::from_utf8_lossy(&tail[m.start()..]).to_string()
         } else {
             String::new()
         };
@@ -216,9 +219,12 @@ impl Driver for GenericDriver {
         let elapsed = start.elapsed();
         let raw_result = String::from_utf8_lossy(&data).to_string();
 
-        // Find the prompt
-        let prompt = if let Some(m) = self.prompt_pattern.find(&data) {
-            String::from_utf8_lossy(&data[m.start()..])
+        // Find the prompt (search only the tail, not the full buffer)
+        let search_depth = self.channel.as_ref().map(|c| c.search_depth()).unwrap_or(1000);
+        let tail_start = data.len().saturating_sub(search_depth);
+        let tail = &data[tail_start..];
+        let prompt = if let Some(m) = self.prompt_pattern.find(tail) {
+            String::from_utf8_lossy(&tail[m.start()..])
                 .trim()
                 .to_string()
         } else {

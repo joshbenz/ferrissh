@@ -107,4 +107,9 @@ impl PtyChannel {
     pub fn take_buffer(&mut self) -> Vec<u8> {
         self.buffer.take()
     }
+
+    /// Get the search depth setting.
+    pub fn search_depth(&self) -> usize {
+        self.buffer.search_depth()
+    }
 }
