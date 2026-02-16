@@ -196,6 +196,33 @@ impl PrivilegeManager {
     pub fn level_names(&self) -> impl Iterator<Item = &String> {
         self.levels.keys()
     }
+
+    /// Get a reference to all privilege levels.
+    pub fn levels(&self) -> &IndexMap<String, PrivilegeLevel> {
+        &self.levels
+    }
+
+    /// Register a dynamic privilege level at runtime.
+    ///
+    /// Used by vendor-specific config sessions (e.g., Arista named sessions)
+    /// that need to add temporary privilege levels for session prompts.
+    ///
+    /// After calling this, you must also call `GenericDriver::rebuild_prompt_pattern()`
+    /// so the driver can recognize the new prompt.
+    pub fn register_dynamic_level(&mut self, level: PrivilegeLevel) {
+        let name = level.name.clone();
+        self.levels.insert(name, level);
+        self.graph = Self::build_graph(&self.levels);
+    }
+
+    /// Remove a dynamically registered privilege level.
+    ///
+    /// After calling this, you must also call `GenericDriver::rebuild_prompt_pattern()`
+    /// to remove the pattern from the combined prompt regex.
+    pub fn remove_dynamic_level(&mut self, name: &str) {
+        self.levels.shift_remove(name);
+        self.graph = Self::build_graph(&self.levels);
+    }
 }
 
 /// Information about a privilege level transition.

@@ -32,6 +32,8 @@ pub enum Platform {
     Linux,
     /// Juniper JUNOS.
     JuniperJunos,
+    /// Arista EOS.
+    AristaEos,
     /// User-provided platform definition.
     Custom(Box<PlatformDefinition>),
 }
@@ -41,6 +43,7 @@ impl From<Platform> for PlatformDefinition {
         match p {
             Platform::Linux => vendors::linux::platform(),
             Platform::JuniperJunos => vendors::juniper::platform(),
+            Platform::AristaEos => vendors::arista::platform(),
             Platform::Custom(def) => *def,
         }
     }
