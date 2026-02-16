@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use log::warn;
+use log::{debug, warn};
 use russh::Channel;
-use russh::client::{self, Handle, Msg};
+use russh::client::{self, Handle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 
 use super::config::{AuthMethod, HostKeyVerification, SshConfig};
@@ -100,12 +100,21 @@ impl SshTransport {
                 .await
                 .map_err(TransportError::Ssh)?
                 .success(),
-            // TODO: Lets automatically handle auth interactive with password here
-            AuthMethod::Password(password) => session
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(TransportError::Ssh)?
-                .success(),
+            AuthMethod::Password(password) => {
+                let result = session
+                    .authenticate_password(&config.username, password)
+                    .await
+                    .map_err(TransportError::Ssh)?;
+
+                if result.success() {
+                    true
+                } else {
+                    // Password auth failed — try keyboard-interactive as fallback
+                    debug!("Password auth failed, trying keyboard-interactive");
+                    Self::authenticate_keyboard_interactive(session, &config.username, password)
+                        .await?
+                }
+            }
             AuthMethod::PrivateKey { path, passphrase } => {
                 let key = load_secret_key(path, passphrase.as_deref())
                     .map_err(|e| TransportError::Key(e.to_string()))?;
@@ -136,6 +145,46 @@ impl SshTransport {
         }
 
         Ok(())
+    }
+
+    /// Attempt keyboard-interactive authentication.
+    ///
+    /// For each prompt the server sends, if it looks like a password prompt
+    /// we send the password; otherwise we send an empty string (servers can
+    /// send empty or informational prompts).
+    async fn authenticate_keyboard_interactive(
+        session: &mut Handle<SshHandler>,
+        username: &str,
+        password: &str,
+    ) -> Result<bool> {
+        let mut response = session
+            .authenticate_keyboard_interactive_start(username, None)
+            .await
+            .map_err(TransportError::Ssh)?;
+
+        loop {
+            match response {
+                KeyboardInteractiveAuthResponse::Success => return Ok(true),
+                KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let answers: Vec<String> = prompts
+                        .iter()
+                        .map(|p| {
+                            if p.prompt.to_lowercase().contains("password") {
+                                password.to_string()
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .collect();
+
+                    response = session
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await
+                        .map_err(TransportError::Ssh)?;
+                }
+            }
+        }
     }
 
     /// Close the connection.
