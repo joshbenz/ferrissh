@@ -43,7 +43,7 @@ pub fn platform() -> PlatformDefinition {
         .with_parent("exec")
         .with_escalate("enable")
         .with_deescalate("disable")
-        .with_auth(r"(?i)^password:\s?$")
+        .with_auth(r"(?mi)^password:\s?$")
         .unwrap()
         .with_not_contains("(config");
 
