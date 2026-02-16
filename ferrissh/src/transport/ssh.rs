@@ -1,12 +1,14 @@
 //! SSH transport implementation using russh.
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
+use log::{debug, warn};
 use russh::Channel;
-use russh::client::{self, Handle, Msg};
+use russh::client::{self, Handle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 
-use super::config::{AuthMethod, SshConfig};
+use super::config::{AuthMethod, HostKeyVerification, SshConfig};
 use crate::error::{Result, TransportError};
 
 /// SSH transport wrapping russh client.
@@ -26,8 +28,14 @@ impl SshTransport {
             ..Default::default()
         });
 
+        let host_key_error: Arc<Mutex<Option<TransportError>>> = Arc::new(Mutex::new(None));
+
         let handler = SshHandler {
-            verify_host_key: config.verify_host_key,
+            host: config.host.clone(),
+            port: config.port,
+            host_key_verification: config.host_key_verification.clone(),
+            known_hosts_path: config.known_hosts_path.clone(),
+            host_key_error: host_key_error.clone(),
         };
 
         // Connect to the server
@@ -37,7 +45,15 @@ impl SshTransport {
         )
         .await
         .map_err(|_| TransportError::Timeout(config.timeout))?
-        .map_err(TransportError::Ssh)?;
+        .map_err(|e| {
+            // If check_server_key stored a detailed error, use that instead
+            // of the generic russh::Error::UnknownKey
+            if let Some(hk_err) = host_key_error.lock().unwrap().take() {
+                hk_err
+            } else {
+                TransportError::Ssh(e)
+            }
+        })?;
 
         // Authenticate
         Self::authenticate(&mut session, &config).await?;
@@ -84,12 +100,21 @@ impl SshTransport {
                 .await
                 .map_err(TransportError::Ssh)?
                 .success(),
-            // TODO: Lets automatically handle auth interactive with password here
-            AuthMethod::Password(password) => session
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(TransportError::Ssh)?
-                .success(),
+            AuthMethod::Password(password) => {
+                let result = session
+                    .authenticate_password(&config.username, password)
+                    .await
+                    .map_err(TransportError::Ssh)?;
+
+                if result.success() {
+                    true
+                } else {
+                    // Password auth failed — try keyboard-interactive as fallback
+                    debug!("Password auth failed, trying keyboard-interactive");
+                    Self::authenticate_keyboard_interactive(session, &config.username, password)
+                        .await?
+                }
+            }
             AuthMethod::PrivateKey { path, passphrase } => {
                 let key = load_secret_key(path, passphrase.as_deref())
                     .map_err(|e| TransportError::Key(e.to_string()))?;
@@ -122,6 +147,46 @@ impl SshTransport {
         Ok(())
     }
 
+    /// Attempt keyboard-interactive authentication.
+    ///
+    /// For each prompt the server sends, if it looks like a password prompt
+    /// we send the password; otherwise we send an empty string (servers can
+    /// send empty or informational prompts).
+    async fn authenticate_keyboard_interactive(
+        session: &mut Handle<SshHandler>,
+        username: &str,
+        password: &str,
+    ) -> Result<bool> {
+        let mut response = session
+            .authenticate_keyboard_interactive_start(username, None)
+            .await
+            .map_err(TransportError::Ssh)?;
+
+        loop {
+            match response {
+                KeyboardInteractiveAuthResponse::Success => return Ok(true),
+                KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let answers: Vec<String> = prompts
+                        .iter()
+                        .map(|p| {
+                            if p.prompt.to_lowercase().contains("password") {
+                                password.to_string()
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .collect();
+
+                    response = session
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await
+                        .map_err(TransportError::Ssh)?;
+                }
+            }
+        }
+    }
+
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
         self.session
@@ -134,7 +199,48 @@ impl SshTransport {
 
 /// SSH client handler for russh.
 struct SshHandler {
-    verify_host_key: bool,
+    host: String,
+    port: u16,
+    host_key_verification: HostKeyVerification,
+    known_hosts_path: Option<PathBuf>,
+    /// Stores a detailed host-key error so connect() can surface it
+    /// instead of the generic russh::Error::UnknownKey.
+    host_key_error: Arc<Mutex<Option<TransportError>>>,
+}
+
+impl SshHandler {
+    /// Check the host key against known_hosts.
+    ///
+    /// Returns `Ok(true)` if matched, `Ok(false)` if host not found,
+    /// `Err(TransportError::HostKeyChanged)` if key changed.
+    fn check_known_hosts(&self, pubkey: &PublicKey) -> std::result::Result<bool, TransportError> {
+        let result = if let Some(ref path) = self.known_hosts_path {
+            russh::keys::check_known_hosts_path(&self.host, self.port, pubkey, path)
+        } else {
+            russh::keys::check_known_hosts(&self.host, self.port, pubkey)
+        };
+
+        match result {
+            Ok(matched) => Ok(matched),
+            Err(russh::keys::Error::KeyChanged { line }) => Err(TransportError::HostKeyChanged {
+                host: self.host.clone(),
+                port: self.port,
+                line,
+            }),
+            Err(e) => Err(TransportError::KnownHosts(e.to_string())),
+        }
+    }
+
+    /// Save a new host key to known_hosts.
+    fn learn_host_key(&self, pubkey: &PublicKey) -> std::result::Result<(), TransportError> {
+        let result = if let Some(ref path) = self.known_hosts_path {
+            russh::keys::known_hosts::learn_known_hosts_path(&self.host, self.port, pubkey, path)
+        } else {
+            russh::keys::known_hosts::learn_known_hosts(&self.host, self.port, pubkey)
+        };
+
+        result.map_err(|e| TransportError::KnownHosts(e.to_string()))
+    }
 }
 
 // TODO: Impl drop and warn if user is dropping without calling close
@@ -144,15 +250,48 @@ impl client::Handler for SshHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> std::result::Result<bool, Self::Error> {
-        // TODO: Implement proper known_hosts checking
-        if self.verify_host_key {
-            // For now, always accept when verification is enabled
-            // Real implementation should check against known_hosts
-            Ok(true)
-        } else {
-            Ok(true)
+        match self.host_key_verification {
+            HostKeyVerification::Disabled => Ok(true),
+
+            HostKeyVerification::AcceptNew => {
+                match self.check_known_hosts(server_public_key) {
+                    Ok(true) => Ok(true),
+                    Ok(false) => {
+                        // Unknown host — learn the key
+                        if let Err(e) = self.learn_host_key(server_public_key) {
+                            warn!("Failed to save host key: {}", e);
+                        }
+                        Ok(true)
+                    }
+                    Err(e) => {
+                        // Key changed — store detailed error and reject
+                        *self.host_key_error.lock().unwrap() = Some(e);
+                        Ok(false)
+                    }
+                }
+            }
+
+            HostKeyVerification::Strict => {
+                match self.check_known_hosts(server_public_key) {
+                    Ok(true) => Ok(true),
+                    Ok(false) => {
+                        // Unknown host — reject in strict mode
+                        *self.host_key_error.lock().unwrap() =
+                            Some(TransportError::HostKeyUnknown {
+                                host: self.host.clone(),
+                                port: self.port,
+                            });
+                        Ok(false)
+                    }
+                    Err(e) => {
+                        // Key changed — store detailed error and reject
+                        *self.host_key_error.lock().unwrap() = Some(e);
+                        Ok(false)
+                    }
+                }
+            }
         }
     }
 }

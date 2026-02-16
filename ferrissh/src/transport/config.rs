@@ -3,6 +3,22 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Host key verification mode, analogous to OpenSSH's `StrictHostKeyChecking`.
+#[derive(Debug, Clone, Default)]
+pub enum HostKeyVerification {
+    /// Reject unknown and changed keys. Connection fails if the host
+    /// is not already in known_hosts.
+    Strict,
+
+    /// Accept and auto-learn unknown keys, but reject changed keys.
+    /// This is the default and matches common SSH client behavior.
+    #[default]
+    AcceptNew,
+
+    /// Accept all keys without checking. For testing and lab use only.
+    Disabled,
+}
+
 /// SSH connection configuration.
 #[derive(Debug, Clone)]
 pub struct SshConfig {
@@ -27,8 +43,8 @@ pub struct SshConfig {
     /// Terminal height for PTY.
     pub terminal_height: u32,
 
-    /// Whether to verify the host key.
-    pub verify_host_key: bool,
+    /// Host key verification mode.
+    pub host_key_verification: HostKeyVerification,
 
     /// Path to known_hosts file.
     pub known_hosts_path: Option<PathBuf>,

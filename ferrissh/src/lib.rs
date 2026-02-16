@@ -49,3 +49,4 @@ pub use driver::{
 };
 pub use error::Error;
 pub use platform::{Platform, PlatformDefinition, PrivilegeLevel};
+pub use transport::HostKeyVerification;

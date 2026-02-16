@@ -39,7 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .port(args.port)
         .username(&args.user)
         .platform(Platform::JuniperJunos)
-        .timeout(Duration::from_secs(args.timeout));
+        .timeout(Duration::from_secs(args.timeout))
+        .danger_disable_host_key_verification();
 
     if let Some(password) = &args.password {
         builder = builder.password(password);
