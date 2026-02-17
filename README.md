@@ -508,7 +508,12 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Licensed under either of
+
+- [MIT license](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
 
 ## Acknowledgments
 
