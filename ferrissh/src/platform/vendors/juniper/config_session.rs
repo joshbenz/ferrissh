@@ -141,9 +141,18 @@ impl ConfigSession for JuniperConfigSession<'_> {
         self.driver.send_command("rollback 0").await?;
 
         // Return to original privilege level (exits config mode)
-        self.driver
-            .acquire_privilege(&self.original_privilege)
-            .await?;
+        let current = self
+            .driver
+            .privilege_manager()
+            .current()
+            .map(|l| l.name.clone())
+            .unwrap_or_default();
+
+        if current != self.original_privilege {
+            self.driver
+                .acquire_privilege(&self.original_privilege)
+                .await?;
+        }
 
         Ok(())
     }
