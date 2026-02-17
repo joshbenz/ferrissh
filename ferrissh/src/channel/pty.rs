@@ -7,6 +7,8 @@ use russh::Channel;
 use russh::ChannelMsg;
 use russh::client::Msg;
 
+use log::trace;
+
 use super::buffer::PatternBuffer;
 use crate::error::{ChannelError, Result};
 
@@ -55,6 +57,7 @@ impl PtyChannel {
         let mut data = Vec::with_capacity(command.len() + 1);
         data.extend_from_slice(command.as_bytes());
         data.push(b'\n');
+        trace!("sending {} bytes", data.len());
         self.write(&data).await
     }
 
@@ -76,6 +79,7 @@ impl PtyChannel {
                         Some(ChannelMsg::Data { data }) => {
                             self.buffer.extend(&data);
                             if self.buffer.search_tail(pattern).is_some() {
+                                trace!("prompt pattern matched after {} bytes", self.buffer.as_slice().len());
                                 return Ok(self.buffer.take());
                             }
                         }

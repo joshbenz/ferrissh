@@ -36,7 +36,7 @@
 //! # }
 //! ```
 
-use log::warn;
+use log::{debug, warn};
 
 use std::time::Duration;
 
@@ -88,6 +88,11 @@ impl<'a> JuniperConfigSession<'a> {
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
+        debug!(
+            "entering Juniper config session (from {:?})",
+            original_privilege
+        );
+
         // Enter configuration mode (no-op if already there)
         driver.acquire_privilege("configuration").await?;
 
@@ -105,6 +110,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
     }
 
     async fn commit(mut self) -> Result<()> {
+        debug!("Juniper config session: commit");
         self.consumed = true;
 
         // commit and-quit commits and exits config mode in one command
@@ -128,6 +134,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
     }
 
     async fn abort(mut self) -> Result<()> {
+        debug!("Juniper config session: abort");
         self.consumed = true;
 
         // Discard all uncommitted changes
@@ -142,6 +149,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
     }
 
     fn detach(mut self) -> Result<()> {
+        debug!("Juniper config session: detach");
         self.consumed = true;
         // Stay in config mode — user can re-create JuniperConfigSession::new()
         Ok(())
@@ -150,6 +158,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
 
 impl Diffable for JuniperConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
+        debug!("Juniper config session: diff");
         let response = self.driver.send_command("show | compare").await?;
         Ok(response.result)
     }
@@ -157,6 +166,7 @@ impl Diffable for JuniperConfigSession<'_> {
 
 impl Validatable for JuniperConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
+        debug!("Juniper config session: validate");
         let response = self.driver.send_command("commit check").await?;
 
         if response.is_success() && response.result.contains("configuration check succeeds") {
@@ -188,6 +198,7 @@ impl Validatable for JuniperConfigSession<'_> {
 
 impl ConfirmableCommit for JuniperConfigSession<'_> {
     async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
+        debug!("Juniper config session: commit_confirmed ({:?})", timeout);
         // Juniper uses minutes for commit confirmed (range 1-65535)
         let secs = timeout.as_secs();
 

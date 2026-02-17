@@ -80,15 +80,12 @@ pub fn platform() -> PlatformDefinition {
     // Two-line prompt: context line + user@host# line
     // Pattern matches any [...]\nCPM:user@host# prompt.
     // not_contains filters out config mode prompts (which have (ex), (ro), (gl), (pr)).
-    let exec = PrivilegeLevel::new(
-        "exec",
-        r"(?mi)^\[.*\]\n\*?[abcd]:[\w._]+@[\w\s_.-]+#\s?$",
-    )
-    .unwrap()
-    .with_not_contains("(ex)")
-    .with_not_contains("(ro)")
-    .with_not_contains("(gl)")
-    .with_not_contains("(pr)");
+    let exec = PrivilegeLevel::new("exec", r"(?mi)^\[.*\]\n\*?[abcd]:[\w._]+@[\w\s_.-]+#\s?$")
+        .unwrap()
+        .with_not_contains("(ex)")
+        .with_not_contains("(ro)")
+        .with_not_contains("(gl)")
+        .with_not_contains("(pr)");
 
     // MD-CLI exclusive configuration mode at root level
     // First line: optional !/* indicators + (ex) or (ex:bof) + [/] or [/]
@@ -120,13 +117,10 @@ pub fn platform() -> PlatformDefinition {
     // Pattern: optional * + CPM letter : hostname #
     // not_contains "@" prevents matching MD-CLI's second prompt line
     // not_contains ">config" prevents matching classic_configuration
-    let classic_exec = PrivilegeLevel::new(
-        "classic_exec",
-        r"(?mi)^\*?[abcd]:[\w\s_.-]+#\s?$",
-    )
-    .unwrap()
-    .with_not_contains("@")
-    .with_not_contains(">config");
+    let classic_exec = PrivilegeLevel::new("classic_exec", r"(?mi)^\*?[abcd]:[\w\s_.-]+#\s?$")
+        .unwrap()
+        .with_not_contains("@")
+        .with_not_contains(">config");
 
     // Classic configuration mode
     // Pattern: optional * + CPM : hostname > config [deeper>context] # or $
@@ -181,9 +175,17 @@ mod tests {
         assert_eq!(platform.privilege_levels.len(), 5);
         assert!(platform.privilege_levels.contains_key("exec"));
         assert!(platform.privilege_levels.contains_key("configuration"));
-        assert!(platform.privilege_levels.contains_key("configuration_with_path"));
+        assert!(
+            platform
+                .privilege_levels
+                .contains_key("configuration_with_path")
+        );
         assert!(platform.privilege_levels.contains_key("classic_exec"));
-        assert!(platform.privilege_levels.contains_key("classic_configuration"));
+        assert!(
+            platform
+                .privilege_levels
+                .contains_key("classic_configuration")
+        );
     }
 
     // =========================================================================
@@ -201,7 +203,10 @@ mod tests {
         assert!(exec.pattern.is_match(b"[/]\nB:admin@router#"));
 
         // With show context
-        assert!(exec.pattern.is_match(b"[/show router interface]\nA:admin@node-2#"));
+        assert!(
+            exec.pattern
+                .is_match(b"[/show router interface]\nA:admin@node-2#")
+        );
 
         // matches() filters out config mode via not_contains
         assert!(exec.matches("[/]\nA:admin@router#"));
@@ -244,7 +249,11 @@ mod tests {
         assert!(!config.pattern.is_match(b"[/]\nA:admin@router#"));
 
         // Should NOT match config with deeper path
-        assert!(!config.pattern.is_match(b"(ex)[/configure]\nA:admin@router#"));
+        assert!(
+            !config
+                .pattern
+                .is_match(b"(ex)[/configure]\nA:admin@router#")
+        );
     }
 
     #[test]
@@ -256,30 +265,42 @@ mod tests {
             .unwrap();
 
         // Config with path
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure]\nA:admin@router#"));
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure router \"Base\"]\nA:admin@router#"));
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure router \"Base\" bgp]\nA:admin@router#"));
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(ex)[/configure]\nA:admin@router#")
+        );
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(ex)[/configure router \"Base\"]\nA:admin@router#")
+        );
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(ex)[/configure router \"Base\" bgp]\nA:admin@router#")
+        );
 
         // With uncommitted changes
-        assert!(config_path
-            .pattern
-            .is_match(b"*(ex)[/configure router \"Base\"]\nA:admin@router#"));
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"*(ex)[/configure router \"Base\"]\nA:admin@router#")
+        );
 
         // With outdated baseline + uncommitted
-        assert!(config_path
-            .pattern
-            .is_match(b"!*(ex)[/configure router \"Base\"]\nA:admin@router#"));
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"!*(ex)[/configure router \"Base\"]\nA:admin@router#")
+        );
 
         // BOF with path
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex:bof)[/configure system]\nA:admin@router#"));
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(ex:bof)[/configure system]\nA:admin@router#")
+        );
 
         // Should NOT match root-level config (that's the configuration level)
         assert!(!config_path.pattern.is_match(b"(ex)[/]\nA:admin@router#"));
@@ -337,12 +358,12 @@ mod tests {
 
         // Deeper config contexts
         assert!(classic_config.pattern.is_match(b"A:router>config>router#"));
-        assert!(classic_config
-            .pattern
-            .is_match(b"*A:router>config>router>bgp#"));
-        assert!(classic_config
-            .pattern
-            .is_match(b"A:router>config>service#"));
+        assert!(
+            classic_config
+                .pattern
+                .is_match(b"*A:router>config>router>bgp#")
+        );
+        assert!(classic_config.pattern.is_match(b"A:router>config>service#"));
 
         // New context ($ instead of #)
         assert!(classic_config.pattern.is_match(b"A:router>config>router$"));
@@ -377,10 +398,7 @@ mod tests {
             config.escalate_command,
             Some("edit-config exclusive".to_string())
         );
-        assert_eq!(
-            config.deescalate_command,
-            Some("quit-config".to_string())
-        );
+        assert_eq!(config.deescalate_command, Some("quit-config".to_string()));
 
         // MD-CLI configuration_with_path's parent is exec, no escalate
         let config_path = platform
@@ -389,10 +407,7 @@ mod tests {
             .unwrap();
         assert_eq!(config_path.previous_priv, Some("exec".to_string()));
         assert!(config_path.escalate_command.is_none());
-        assert_eq!(
-            config_path.deescalate_command,
-            Some("exit all".to_string())
-        );
+        assert_eq!(config_path.deescalate_command, Some("exit all".to_string()));
 
         // Classic exec is root (no parent) — disconnected from MD-CLI
         let classic_exec = platform.privilege_levels.get("classic_exec").unwrap();
@@ -454,36 +469,62 @@ mod tests {
     fn test_on_open_commands() {
         let platform = platform();
         assert_eq!(platform.on_open_commands.len(), 5);
-        assert!(platform
-            .on_open_commands
-            .contains(&"environment command-completion space false".to_string()));
-        assert!(platform
-            .on_open_commands
-            .contains(&"environment console width 512".to_string()));
-        assert!(platform
-            .on_open_commands
-            .contains(&"environment more false".to_string()));
-        assert!(platform
-            .on_open_commands
-            .contains(&"//environment no more".to_string()));
-        assert!(platform
-            .on_open_commands
-            .contains(&"environment no more".to_string()));
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"environment command-completion space false".to_string())
+        );
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"environment console width 512".to_string())
+        );
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"environment more false".to_string())
+        );
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"//environment no more".to_string())
+        );
+        assert!(
+            platform
+                .on_open_commands
+                .contains(&"environment no more".to_string())
+        );
     }
 
     #[test]
     fn test_failure_patterns() {
         let platform = platform();
         assert!(!platform.failed_when_contains.is_empty());
-        assert!(platform.failed_when_contains.contains(&"MINOR:".to_string()));
-        assert!(platform.failed_when_contains.contains(&"MAJOR:".to_string()));
-        assert!(platform
-            .failed_when_contains
-            .contains(&"CRITICAL:".to_string()));
-        assert!(platform.failed_when_contains.contains(&"Error:".to_string()));
-        assert!(platform
-            .failed_when_contains
-            .contains(&"Bad Command:".to_string()));
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"MINOR:".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"MAJOR:".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"CRITICAL:".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"Error:".to_string())
+        );
+        assert!(
+            platform
+                .failed_when_contains
+                .contains(&"Bad Command:".to_string())
+        );
     }
 
     #[test]

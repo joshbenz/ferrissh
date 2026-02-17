@@ -23,6 +23,8 @@ pub struct SshTransport {
 impl SshTransport {
     /// Connect to the SSH server and authenticate.
     pub async fn connect(config: SshConfig) -> Result<Self> {
+        debug!("connecting to {}:{}", config.host, config.port);
+
         let ssh_config = Arc::new(client::Config {
             inactivity_timeout: Some(config.timeout),
             ..Default::default()
@@ -55,6 +57,8 @@ impl SshTransport {
             }
         })?;
 
+        debug!("connected to {}:{}", config.host, config.port);
+
         // Authenticate
         Self::authenticate(&mut session, &config).await?;
 
@@ -63,6 +67,11 @@ impl SshTransport {
 
     /// Open a new PTY channel on this connection.
     pub async fn open_channel(&self) -> Result<Channel<Msg>> {
+        debug!(
+            "opening PTY channel ({}x{})",
+            self.config.terminal_width, self.config.terminal_height
+        );
+
         let channel = self
             .session
             .channel_open_session()
@@ -94,6 +103,16 @@ impl SshTransport {
 
     /// Authenticate with the server.
     async fn authenticate(session: &mut Handle<SshHandler>, config: &SshConfig) -> Result<()> {
+        let auth_method = match &config.auth {
+            AuthMethod::None => "none",
+            AuthMethod::Password(_) => "password",
+            AuthMethod::PrivateKey { .. } => "key",
+        };
+        debug!(
+            "authenticating user '{}' via {}",
+            config.username, auth_method
+        );
+
         let success = match &config.auth {
             AuthMethod::None => session
                 .authenticate_none(&config.username)
@@ -144,6 +163,7 @@ impl SshTransport {
             .into());
         }
 
+        debug!("authentication successful for '{}'", config.username);
         Ok(())
     }
 
@@ -189,6 +209,10 @@ impl SshTransport {
 
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
+        debug!(
+            "closing connection to {}:{}",
+            self.config.host, self.config.port
+        );
         self.session
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await
