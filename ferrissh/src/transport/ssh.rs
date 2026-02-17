@@ -26,7 +26,9 @@ impl SshTransport {
         debug!("connecting to {}:{}", config.host, config.port);
 
         let ssh_config = Arc::new(client::Config {
-            inactivity_timeout: Some(config.timeout),
+            inactivity_timeout: config.inactivity_timeout,
+            keepalive_interval: config.keepalive_interval,
+            keepalive_max: config.keepalive_max,
             ..Default::default()
         });
 
