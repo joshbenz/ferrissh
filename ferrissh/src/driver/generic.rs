@@ -15,7 +15,7 @@ use crate::error::{DriverError, Result};
 use crate::platform::PlatformDefinition;
 use crate::transport::SshTransport;
 use crate::transport::config::SshConfig;
-use log::debug;
+use log::{debug, trace};
 
 /// Generic driver that works with any platform definition.
 ///
@@ -158,8 +158,19 @@ impl GenericDriver {
         let tail_start = data.len().saturating_sub(search_depth);
         let tail = &data[tail_start..];
         let prompt = if let Some(m) = self.prompt_pattern.find(tail) {
-            String::from_utf8_lossy(&tail[m.start()..]).to_string()
+            let matched = String::from_utf8_lossy(&tail[m.start()..]).to_string();
+            trace!(
+                "prompt matched: {:?} (from {} bytes of output)",
+                matched,
+                data.len()
+            );
+            matched
         } else {
+            trace!(
+                "no prompt match in {} bytes of output (tail: {:?})",
+                data.len(),
+                String::from_utf8_lossy(tail)
+            );
             String::new()
         };
 
@@ -195,6 +206,11 @@ impl Driver for GenericDriver {
             return Err(DriverError::AlreadyConnected.into());
         }
 
+        debug!(
+            "opening connection to {} (platform: {})",
+            self.ssh_config.host, self.platform.name
+        );
+
         // Connect
         let transport = SshTransport::connect(self.ssh_config.clone()).await?;
 
@@ -212,15 +228,24 @@ impl Driver for GenericDriver {
         if let Ok(level) = self.privilege_manager.determine_from_prompt(&prompt) {
             let level_name = level.name.clone();
             self.privilege_manager.set_current(&level_name)?;
+            debug!("initial privilege level: {:?}", level_name);
         }
 
         // Execute on_open commands from platform definition
+        if !self.platform.on_open_commands.is_empty() {
+            debug!(
+                "executing {} on-open commands",
+                self.platform.on_open_commands.len()
+            );
+        }
         self.execute_on_open_commands().await?;
 
         Ok(())
     }
 
     async fn close(&mut self) -> Result<()> {
+        debug!("closing connection");
+
         // Execute on_close commands before disconnecting
         if self.channel.is_some() {
             for cmd in &self.platform.on_close_commands.clone() {
@@ -238,6 +263,8 @@ impl Driver for GenericDriver {
     }
 
     async fn send_command(&mut self, command: &str) -> Result<Response> {
+        debug!("send_command: {:?}", command);
+
         let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
 
         let start = Instant::now();
@@ -262,10 +289,16 @@ impl Driver for GenericDriver {
         let tail_start = data.len().saturating_sub(search_depth);
         let tail = &data[tail_start..];
         let prompt = if let Some(m) = self.prompt_pattern.find(tail) {
-            String::from_utf8_lossy(&tail[m.start()..])
+            let matched = String::from_utf8_lossy(&tail[m.start()..])
                 .trim()
-                .to_string()
+                .to_string();
+            trace!("send_command prompt matched: {:?}", matched);
+            matched
         } else {
+            trace!(
+                "send_command: no prompt match in tail ({} bytes)",
+                tail.len()
+            );
             String::new()
         };
 
@@ -285,6 +318,7 @@ impl Driver for GenericDriver {
         // Check for failure patterns
         for pattern in &self.platform.failed_when_contains {
             if result.contains(pattern) {
+                debug!("send_command: completed in {:?}, success=false", elapsed);
                 return Ok(Response::failed(
                     command,
                     result.clone(),
@@ -296,6 +330,7 @@ impl Driver for GenericDriver {
             }
         }
 
+        debug!("send_command: completed in {:?}, success=true", elapsed);
         Ok(Response::new(command, result, raw_result, prompt, elapsed))
     }
 
@@ -309,6 +344,8 @@ impl Driver for GenericDriver {
         if current == target {
             return Ok(()); // Already at target
         }
+
+        debug!("acquire_privilege: {} -> {}", current, target);
 
         // Find path from current to target
         let path = self.privilege_manager.find_path(&current, target)?;
@@ -325,6 +362,11 @@ impl Driver for GenericDriver {
                     from: from.clone(),
                     to: to.clone(),
                 })?;
+
+            debug!(
+                "privilege transition: {} -> {} via {:?}",
+                from, to, transition.command
+            );
 
             // Send the transition command
             let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
@@ -437,6 +479,8 @@ impl Driver for GenericDriver {
     }
 
     async fn send_config(&mut self, commands: &[&str]) -> Result<Vec<Response>> {
+        debug!("send_config: {} commands", commands.len());
+
         // Save current privilege level
         let original_privilege = self.privilege_manager.current().map(|l| l.name.clone());
 
@@ -448,11 +492,7 @@ impl Driver for GenericDriver {
                 .privilege_levels
                 .keys()
                 .filter(|name| name.to_lowercase().contains("config"))
-                .find(|name| {
-                    self.privilege_manager
-                        .find_path(current_name, name)
-                        .is_ok()
-                })
+                .find(|name| self.privilege_manager.find_path(current_name, name).is_ok())
                 .cloned()
         } else {
             self.platform

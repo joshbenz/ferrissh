@@ -29,7 +29,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use log::warn;
+use log::{debug, warn};
 
 use super::Driver;
 use super::generic::GenericDriver;
@@ -172,6 +172,11 @@ impl<'a> GenericConfigSession<'a> {
             message: "No reachable configuration privilege level found".to_string(),
         })?;
 
+        debug!(
+            "entering generic config session (from {:?} to {:?})",
+            original_privilege, config_privilege
+        );
+
         driver.acquire_privilege(&config_privilege).await?;
 
         Ok(Self {
@@ -189,6 +194,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     async fn commit(mut self) -> Result<()> {
+        debug!("generic config session: commit");
         self.consumed = true;
         if self.original_privilege != self.config_privilege {
             self.driver
@@ -199,6 +205,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     async fn abort(mut self) -> Result<()> {
+        debug!("generic config session: abort");
         self.consumed = true;
         if self.original_privilege != self.config_privilege {
             self.driver
@@ -209,6 +216,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     fn detach(mut self) -> Result<()> {
+        debug!("generic config session: detach");
         self.consumed = true;
         Ok(())
     }

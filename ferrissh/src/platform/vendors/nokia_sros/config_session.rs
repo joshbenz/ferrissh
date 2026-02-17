@@ -36,7 +36,7 @@
 //! # }
 //! ```
 
-use log::warn;
+use log::{debug, warn};
 
 use std::time::Duration;
 
@@ -94,6 +94,10 @@ impl<'a> NokiaConfigSession<'a> {
 
         // Reject Classic CLI mode
         if original_privilege.starts_with("classic_") {
+            debug!(
+                "Nokia config session rejected: Classic CLI mode (privilege {:?})",
+                original_privilege
+            );
             return Err(DriverError::InvalidConfig {
                 message: "NokiaConfigSession requires MD-CLI mode. \
                     The device is running Classic CLI, which has no candidate/commit model. \
@@ -103,6 +107,11 @@ impl<'a> NokiaConfigSession<'a> {
             }
             .into());
         }
+
+        debug!(
+            "entering Nokia config session (from {:?})",
+            original_privilege
+        );
 
         // Enter exclusive configuration mode (no-op if already there)
         driver.acquire_privilege("configuration").await?;
@@ -121,6 +130,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
     }
 
     async fn commit(mut self) -> Result<()> {
+        debug!("Nokia config session: commit");
         self.consumed = true;
 
         // Commit the candidate configuration
@@ -147,6 +157,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
     }
 
     async fn abort(mut self) -> Result<()> {
+        debug!("Nokia config session: abort");
         self.consumed = true;
 
         // Discard all uncommitted changes (avoids quit-config confirmation prompt)
@@ -164,6 +175,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
     }
 
     fn detach(mut self) -> Result<()> {
+        debug!("Nokia config session: detach");
         self.consumed = true;
         // Stay in config mode — user can re-create NokiaConfigSession::new()
         Ok(())
@@ -172,6 +184,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
 
 impl Diffable for NokiaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
+        debug!("Nokia config session: diff");
         let response = self.driver.send_command("compare").await?;
         Ok(response.result)
     }
@@ -179,6 +192,7 @@ impl Diffable for NokiaConfigSession<'_> {
 
 impl Validatable for NokiaConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
+        debug!("Nokia config session: validate");
         let response = self.driver.send_command("validate").await?;
 
         // Nokia validate produces no output on success.
@@ -209,6 +223,7 @@ impl Validatable for NokiaConfigSession<'_> {
 
 impl ConfirmableCommit for NokiaConfigSession<'_> {
     async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
+        debug!("Nokia config session: commit_confirmed ({:?})", timeout);
         // Nokia uses minutes for commit confirmed (range 1-65535, default 10)
         let secs = timeout.as_secs();
 
@@ -270,10 +285,7 @@ mod tests {
         assert_eq!(format_cmd(Duration::from_secs(600)), "commit confirmed 10");
 
         // 1 hour
-        assert_eq!(
-            format_cmd(Duration::from_secs(3600)),
-            "commit confirmed 60"
-        );
+        assert_eq!(format_cmd(Duration::from_secs(3600)), "commit confirmed 60");
     }
 
     #[test]
