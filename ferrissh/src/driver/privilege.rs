@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use indexmap::IndexMap;
+use log::trace;
 use regex::bytes::Regex;
 
 use crate::error::{DriverError, Result};
@@ -81,10 +82,19 @@ impl PrivilegeManager {
 
             // Check if prompt matches this level's pattern
             if level.pattern.is_match(prompt_bytes) {
+                trace!(
+                    "prompt {:?} matched privilege level {:?}",
+                    prompt, level.name
+                );
                 return Ok(level);
             }
         }
 
+        trace!(
+            "no privilege level matched prompt {:?} (checked {} levels)",
+            prompt,
+            self.levels.len()
+        );
         Err(DriverError::UnknownPrivilege {
             prompt: prompt.to_string(),
         }
@@ -143,6 +153,7 @@ impl PrivilegeManager {
                 }
 
                 path.reverse();
+                trace!("find_path: {} -> {} = {:?}", from, to, path);
                 return Ok(path);
             }
 

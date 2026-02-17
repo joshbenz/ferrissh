@@ -1,27 +1,27 @@
-//! Juniper JUNOS configuration session.
+//! Nokia SR OS MD-CLI configuration session.
 //!
-//! Provides RAII-guarded access to Juniper's candidate configuration system.
-//! Unlike Arista's named sessions, Juniper uses a single shared candidate
-//! configuration entered via `configure` (with optional `private`/`exclusive` modes).
+//! Provides RAII-guarded access to Nokia's MD-CLI candidate configuration
+//! with exclusive mode. Only works when the device is running MD-CLI — returns
+//! an error if the driver detects Classic CLI mode.
 //!
-//! Supports diff, validate, and confirmed commit.
+//! Supports diff (`compare`), validate, and confirmed commit.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use ferrissh::{Driver, DriverBuilder, Platform, ConfigSession, Diffable, Validatable};
-//! use ferrissh::platform::vendors::juniper::JuniperConfigSession;
+//! use ferrissh::platform::vendors::nokia_sros::NokiaConfigSession;
 //!
 //! # async fn example() -> Result<(), ferrissh::Error> {
 //! let mut driver = DriverBuilder::new("router.example.com")
 //!     .username("admin")
 //!     .password("secret")
-//!     .platform(Platform::JuniperJunos)
+//!     .platform(Platform::NokiaSros)
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = JuniperConfigSession::new(&mut driver).await?;
-//! session.send_command("set system host-name lab-router").await?;
+//! let mut session = NokiaConfigSession::new(&mut driver).await?;
+//! session.send_command("set / system name lab-router").await?;
 //!
 //! let diff = session.diff().await?;
 //! println!("Changes:\n{}", diff);
@@ -49,33 +49,37 @@ use crate::error::{DriverError, Result};
 
 use super::platform::PLATFORM_NAME;
 
-/// Juniper JUNOS configuration session guard.
+/// Nokia SR OS MD-CLI configuration session guard.
 ///
 /// Holds `&mut GenericDriver` to prevent concurrent driver use.
 /// Implements [`ConfigSession`], [`Diffable`], [`Validatable`], and [`ConfirmableCommit`].
 ///
+/// Only works with MD-CLI mode. If the device is running Classic CLI,
+/// [`new()`](NokiaConfigSession::new) returns an error.
+///
 /// # Re-attach
 ///
 /// After calling [`detach()`](ConfigSession::detach), the driver remains in
-/// configuration mode. Call `JuniperConfigSession::new()` again to re-attach —
+/// configuration mode. Call `NokiaConfigSession::new()` again to re-attach —
 /// `acquire_privilege("configuration")` is a no-op if already in config mode.
-pub struct JuniperConfigSession<'a> {
+pub struct NokiaConfigSession<'a> {
     driver: &'a mut GenericDriver,
     original_privilege: String,
     consumed: bool,
 }
 
-impl<'a> JuniperConfigSession<'a> {
-    /// Enter Juniper configuration mode.
+impl<'a> NokiaConfigSession<'a> {
+    /// Enter Nokia MD-CLI exclusive configuration mode.
     ///
-    /// Validates the platform is Juniper JUNOS, saves the current privilege
-    /// level, and escalates to `configuration` mode via `configure`.
+    /// Validates the platform is Nokia SR OS and that the device is running
+    /// MD-CLI (not Classic CLI). Saves the current privilege level and
+    /// escalates to `configuration` mode via `edit-config exclusive`.
     pub async fn new(driver: &'a mut GenericDriver) -> Result<Self> {
         // Validate platform
         if driver.platform().name != PLATFORM_NAME {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "JuniperConfigSession requires a Juniper JUNOS platform, got '{}'",
+                    "NokiaConfigSession requires a Nokia SR OS platform, got '{}'",
                     driver.platform().name
                 ),
             }
@@ -88,12 +92,28 @@ impl<'a> JuniperConfigSession<'a> {
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
+        // Reject Classic CLI mode
+        if original_privilege.starts_with("classic_") {
+            debug!(
+                "Nokia config session rejected: Classic CLI mode (privilege {:?})",
+                original_privilege
+            );
+            return Err(DriverError::InvalidConfig {
+                message: "NokiaConfigSession requires MD-CLI mode. \
+                    The device is running Classic CLI, which has no candidate/commit model. \
+                    Use driver.acquire_privilege(\"classic_configuration\") and \
+                    driver.send_command() directly for Classic CLI configuration."
+                    .to_string(),
+            }
+            .into());
+        }
+
         debug!(
-            "entering Juniper config session (from {:?})",
+            "entering Nokia config session (from {:?})",
             original_privilege
         );
 
-        // Enter configuration mode (no-op if already there)
+        // Enter exclusive configuration mode (no-op if already there)
         driver.acquire_privilege("configuration").await?;
 
         Ok(Self {
@@ -104,95 +124,104 @@ impl<'a> JuniperConfigSession<'a> {
     }
 }
 
-impl ConfigSession for JuniperConfigSession<'_> {
+impl ConfigSession for NokiaConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
         self.driver.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
-        debug!("Juniper config session: commit");
+        debug!("Nokia config session: commit");
         self.consumed = true;
 
-        // commit and-quit commits and exits config mode in one command
-        self.driver.send_command("commit and-quit").await?;
+        // Commit the candidate configuration
+        self.driver.send_command("commit").await?;
 
-        // Restore original privilege if needed
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Exit config mode
+        self.driver.send_command("quit-config").await?;
 
-        if !self.original_privilege.is_empty() && current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
+
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
-        debug!("Juniper config session: abort");
+        debug!("Nokia config session: abort");
         self.consumed = true;
 
-        // Discard all uncommitted changes
-        self.driver.send_command("rollback 0").await?;
+        // Discard all uncommitted changes (avoids quit-config confirmation prompt)
+        self.driver.send_command("discard").await?;
 
-        // Return to original privilege level (exits config mode)
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Exit config mode
+        self.driver.send_command("quit-config").await?;
 
-        if !self.original_privilege.is_empty() && current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
+
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())
     }
 
     fn detach(mut self) -> Result<()> {
-        debug!("Juniper config session: detach");
+        debug!("Nokia config session: detach");
         self.consumed = true;
-        // Stay in config mode — user can re-create JuniperConfigSession::new()
+        // Stay in config mode — user can re-create NokiaConfigSession::new()
         Ok(())
     }
 }
 
-impl Diffable for JuniperConfigSession<'_> {
+impl Diffable for NokiaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
-        debug!("Juniper config session: diff");
-        let response = self.driver.send_command("show | compare").await?;
+        debug!("Nokia config session: diff");
+        let response = self.driver.send_command("compare").await?;
         Ok(response.result)
     }
 }
 
-impl Validatable for JuniperConfigSession<'_> {
+impl Validatable for NokiaConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
-        debug!("Juniper config session: validate");
-        let response = self.driver.send_command("commit check").await?;
+        debug!("Nokia config session: validate");
+        let response = self.driver.send_command("validate").await?;
 
-        if response.is_success() && response.result.contains("configuration check succeeds") {
+        // Nokia validate produces no output on success.
+        // On failure, error messages are returned and typically trigger
+        // failure patterns (MINOR:/MAJOR:).
+        if response.is_success() {
             Ok(ValidationResult {
                 valid: true,
                 errors: Vec::new(),
                 warnings: Vec::new(),
             })
         } else {
-            // Parse error lines from the output
             let errors: Vec<String> = response
                 .result
                 .lines()
-                .filter(|line| {
-                    let trimmed = line.trim();
-                    !trimmed.is_empty() && !trimmed.contains("configuration check succeeds")
-                })
+                .filter(|line| !line.trim().is_empty())
                 .map(|line| line.trim().to_string())
                 .collect();
 
@@ -205,29 +234,29 @@ impl Validatable for JuniperConfigSession<'_> {
     }
 }
 
-impl ConfirmableCommit for JuniperConfigSession<'_> {
+impl ConfirmableCommit for NokiaConfigSession<'_> {
     async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
-        debug!("Juniper config session: commit_confirmed ({:?})", timeout);
-        // Juniper uses minutes for commit confirmed (range 1-65535)
+        debug!("Nokia config session: commit_confirmed ({:?})", timeout);
+        // Nokia uses minutes for commit confirmed (range 1-65535, default 10)
         let secs = timeout.as_secs();
 
         if secs < 60 {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "Juniper commit confirmed minimum is 1 minute, got {} seconds",
+                    "Nokia commit confirmed minimum is 1 minute, got {} seconds",
                     secs
                 ),
             }
             .into());
         }
 
-        // Round up to next minute using div_ceil
+        // Round up to next minute
         let minutes = secs.div_ceil(60);
 
         if minutes > 65535 {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "Juniper commit confirmed maximum is 65535 minutes, got {}",
+                    "Nokia commit confirmed maximum is 65535 minutes, got {}",
                     minutes
                 ),
             }
@@ -243,10 +272,10 @@ impl ConfirmableCommit for JuniperConfigSession<'_> {
     }
 }
 
-impl Drop for JuniperConfigSession<'_> {
+impl Drop for NokiaConfigSession<'_> {
     fn drop(&mut self) {
         if !self.consumed {
-            warn!("JuniperConfigSession dropped without commit/abort/detach");
+            warn!("NokiaConfigSession dropped without commit/abort/detach");
         }
     }
 }
@@ -257,7 +286,6 @@ mod tests {
 
     #[test]
     fn test_commit_confirmed_formatting() {
-        // Verify Duration-to-minutes conversion and command format
         fn format_cmd(timeout: Duration) -> String {
             let minutes = timeout.as_secs().div_ceil(60);
             format!("commit confirmed {}", minutes)
@@ -275,11 +303,9 @@ mod tests {
 
     #[test]
     fn test_commit_confirmed_minimum() {
-        // Verify Duration < 60s would be rejected
         let secs = Duration::from_secs(30).as_secs();
         assert!(secs < 60, "30 seconds should be below the 1-minute minimum");
 
-        // Exactly 60s is valid
         let secs = Duration::from_secs(60).as_secs();
         assert!(secs >= 60, "60 seconds should meet the minimum");
     }
@@ -294,7 +320,7 @@ mod tests {
         let minutes = Duration::from_secs(61).as_secs().div_ceil(60);
         assert_eq!(minutes, 2);
 
-        // 120 seconds should be exactly 2 minutes (no rounding needed)
+        // 120 seconds should be exactly 2 minutes
         let minutes = Duration::from_secs(120).as_secs().div_ceil(60);
         assert_eq!(minutes, 2);
 

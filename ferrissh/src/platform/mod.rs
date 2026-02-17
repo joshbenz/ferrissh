@@ -34,6 +34,8 @@ pub enum Platform {
     JuniperJunos,
     /// Arista EOS.
     AristaEos,
+    /// Nokia SR OS (auto-detects MD-CLI vs Classic CLI).
+    NokiaSros,
     /// User-provided platform definition.
     Custom(Box<PlatformDefinition>),
 }
@@ -44,6 +46,7 @@ impl From<Platform> for PlatformDefinition {
             Platform::Linux => vendors::linux::platform(),
             Platform::JuniperJunos => vendors::juniper::platform(),
             Platform::AristaEos => vendors::arista::platform(),
+            Platform::NokiaSros => vendors::nokia_sros::platform(),
             Platform::Custom(def) => *def,
         }
     }

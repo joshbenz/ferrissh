@@ -30,7 +30,7 @@
 //! # }
 //! ```
 
-use log::warn;
+use log::{debug, warn};
 
 use std::time::Duration;
 
@@ -99,6 +99,11 @@ impl<'a> AristaConfigSession<'a> {
         let already_registered = driver.privilege_manager().get(&session_priv_name).is_some();
 
         if !already_registered {
+            debug!(
+                "registering dynamic privilege level for session {:?}",
+                session_priv_name
+            );
+
             // Build prompt pattern using first 6 chars of session name (per Arista behavior)
             let first6: String = session_name.chars().take(6).collect();
             let escaped = regex::escape(&first6);
@@ -121,6 +126,11 @@ impl<'a> AristaConfigSession<'a> {
             driver.rebuild_prompt_pattern();
         }
 
+        debug!(
+            "entering Arista config session (from {:?})",
+            original_privilege
+        );
+
         // Enter the session (no-op if already there after re-attach)
         driver.acquire_privilege(&session_priv_name).await?;
 
@@ -140,18 +150,20 @@ impl<'a> AristaConfigSession<'a> {
             .remove_dynamic_level(&self.session_priv_name);
         self.driver.rebuild_prompt_pattern();
 
-        // Restore original privilege if different from current
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
 
-        if current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -164,6 +176,7 @@ impl ConfigSession for AristaConfigSession<'_> {
     }
 
     async fn commit(mut self) -> Result<()> {
+        debug!("Arista config session: commit");
         self.consumed = true;
 
         // Commit the session changes
@@ -176,6 +189,7 @@ impl ConfigSession for AristaConfigSession<'_> {
     }
 
     async fn abort(mut self) -> Result<()> {
+        debug!("Arista config session: abort");
         self.consumed = true;
 
         // Abort discards changes and exits the session
@@ -185,6 +199,7 @@ impl ConfigSession for AristaConfigSession<'_> {
     }
 
     fn detach(mut self) -> Result<()> {
+        debug!("Arista config session: detach");
         self.consumed = true;
         // Leave session active, dynamic level registered
         Ok(())
@@ -193,6 +208,7 @@ impl ConfigSession for AristaConfigSession<'_> {
 
 impl Diffable for AristaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
+        debug!("Arista config session: diff");
         let response = self
             .driver
             .send_command("show session-config diffs")
@@ -203,6 +219,7 @@ impl Diffable for AristaConfigSession<'_> {
 
 impl ConfirmableCommit for AristaConfigSession<'_> {
     async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
+        debug!("Arista config session: commit_confirmed ({:?})", timeout);
         let total = timeout.as_secs();
 
         if total < 60 {

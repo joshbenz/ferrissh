@@ -29,7 +29,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use log::warn;
+use log::{debug, warn};
 
 use super::Driver;
 use super::generic::GenericDriver;
@@ -144,16 +144,38 @@ impl<'a> GenericConfigSession<'a> {
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
-        // Find the configuration privilege level
-        let config_privilege = driver
-            .platform()
-            .privilege_levels
-            .keys()
-            .find(|name| name.to_lowercase().contains("config"))
-            .cloned()
-            .ok_or_else(|| DriverError::InvalidConfig {
-                message: "No configuration privilege level found".to_string(),
-            })?;
+        // Find a configuration privilege level reachable from the current position.
+        // For platforms with disconnected subgraphs (e.g., Nokia SROS with both
+        // MD-CLI and Classic CLI), this ensures we pick the right config level.
+        let config_privilege = if !original_privilege.is_empty() {
+            driver
+                .platform()
+                .privilege_levels
+                .keys()
+                .filter(|name| name.to_lowercase().contains("config"))
+                .find(|name| {
+                    driver
+                        .privilege_manager()
+                        .find_path(&original_privilege, name)
+                        .is_ok()
+                })
+                .cloned()
+        } else {
+            driver
+                .platform()
+                .privilege_levels
+                .keys()
+                .find(|name| name.to_lowercase().contains("config"))
+                .cloned()
+        }
+        .ok_or_else(|| DriverError::InvalidConfig {
+            message: "No reachable configuration privilege level found".to_string(),
+        })?;
+
+        debug!(
+            "entering generic config session (from {:?} to {:?})",
+            original_privilege, config_privilege
+        );
 
         driver.acquire_privilege(&config_privilege).await?;
 
@@ -172,8 +194,9 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     async fn commit(mut self) -> Result<()> {
+        debug!("generic config session: commit");
         self.consumed = true;
-        if self.original_privilege != self.config_privilege {
+        if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;
@@ -182,8 +205,9 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     async fn abort(mut self) -> Result<()> {
+        debug!("generic config session: abort");
         self.consumed = true;
-        if self.original_privilege != self.config_privilege {
+        if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;
@@ -192,6 +216,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     }
 
     fn detach(mut self) -> Result<()> {
+        debug!("generic config session: detach");
         self.consumed = true;
         Ok(())
     }
