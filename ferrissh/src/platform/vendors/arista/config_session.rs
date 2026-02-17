@@ -40,6 +40,8 @@ use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 use crate::platform::PrivilegeLevel;
 
+use super::platform::PLATFORM_NAME;
+
 /// Arista EOS named configuration session guard.
 ///
 /// Holds `&mut GenericDriver` to prevent concurrent driver use.
@@ -75,10 +77,10 @@ impl<'a> AristaConfigSession<'a> {
         let session_name = session_name.into();
 
         // Validate platform
-        if !driver.platform().name.starts_with("arista") {
+        if driver.platform().name != PLATFORM_NAME {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "AristaConfigSession requires an Arista platform, got '{}'",
+                    "AristaConfigSession requires an Arista EOS platform, got '{}'",
                     driver.platform().name
                 ),
             }

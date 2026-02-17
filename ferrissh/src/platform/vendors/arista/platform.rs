@@ -28,6 +28,9 @@
 
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
 
+/// Platform name for Arista EOS.
+pub const PLATFORM_NAME: &str = "arista_eos";
+
 /// Create the Arista EOS platform definition.
 ///
 /// Prompt patterns adapted from scrapli's EOS driver.
@@ -59,7 +62,7 @@ pub fn platform() -> PlatformDefinition {
     .with_deescalate("end")
     .with_not_contains("(config-s-");
 
-    PlatformDefinition::new("arista_eos")
+    PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)
         .with_privilege(privilege_exec)
         .with_privilege(configuration)
