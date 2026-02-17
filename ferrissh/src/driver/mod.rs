@@ -9,6 +9,7 @@ mod generic;
 mod interactive;
 mod privilege;
 pub(crate) mod response;
+mod stream;
 
 pub use builder::DriverBuilder;
 pub use config_session::{
@@ -19,6 +20,7 @@ pub use generic::GenericDriver;
 pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, InteractiveStep};
 pub use privilege::PrivilegeManager;
 pub use response::Response;
+pub use stream::CommandStream;
 
 use std::future::Future;
 

@@ -116,4 +116,45 @@ impl PtyChannel {
     pub fn search_depth(&self) -> usize {
         self.buffer.search_depth()
     }
+
+    /// Read a single raw chunk from the SSH channel.
+    ///
+    /// Returns ANSI-stripped bytes from one `ChannelMsg::Data` event.
+    /// Skips chunks that are empty after stripping. Does NOT interact
+    /// with `PatternBuffer` — intended for streaming use.
+    pub(crate) async fn read_raw_chunk(
+        &mut self,
+        deadline: tokio::time::Instant,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ChannelError::PatternTimeout(timeout).into());
+                }
+                msg = self.channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            let cleaned = strip_ansi_escapes::strip(&data);
+                            if cleaned.is_empty() {
+                                continue;
+                            }
+                            return Ok(cleaned);
+                        }
+                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                            let cleaned = strip_ansi_escapes::strip(&data);
+                            if cleaned.is_empty() {
+                                continue;
+                            }
+                            return Ok(cleaned);
+                        }
+                        Some(ChannelMsg::Eof) | None => {
+                            return Err(ChannelError::Closed.into());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
 }

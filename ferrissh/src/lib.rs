@@ -44,9 +44,9 @@ pub mod transport;
 
 // Re-export main types for convenience
 pub use driver::{
-    ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder, GenericConfigSession,
-    GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult, NamedSession, Response,
-    Validatable, ValidationResult,
+    CommandStream, ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder,
+    GenericConfigSession, GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult,
+    NamedSession, Response, Validatable, ValidationResult,
 };
 pub use error::Error;
 pub use platform::{

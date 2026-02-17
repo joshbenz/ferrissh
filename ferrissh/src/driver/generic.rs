@@ -10,6 +10,7 @@ use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
+use super::stream::CommandStream;
 use crate::channel::{PtyChannel, PtyConfig};
 use crate::error::{DriverError, Result};
 use crate::platform::PlatformDefinition;
@@ -137,6 +138,50 @@ impl GenericDriver {
     /// own session type (e.g., `AristaConfigSession::new(&mut driver, "name")`).
     pub async fn config_session(&mut self) -> Result<GenericConfigSession<'_>> {
         GenericConfigSession::new(self).await
+    }
+
+    /// Send a command and return a streaming handle for real-time output.
+    ///
+    /// Unlike [`send_command`](Driver::send_command), which buffers the entire
+    /// response before returning, this method returns a [`CommandStream`] that
+    /// delivers output chunk-by-chunk as it arrives from the device.
+    ///
+    /// Memory usage is O(search_depth) regardless of output size.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use ferrissh::{Driver, GenericDriver};
+    /// # async fn example(driver: &mut GenericDriver) -> Result<(), ferrissh::Error> {
+    /// let mut stream = driver.send_command_stream("show tech-support").await?;
+    /// while let Some(chunk) = stream.next_chunk().await? {
+    ///     print!("{}", String::from_utf8_lossy(&chunk));
+    /// }
+    /// let response = stream.into_response()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send_command_stream(&mut self, command: &str) -> Result<CommandStream<'_>> {
+        debug!("send_command_stream: {:?}", command);
+
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+
+        // Send the command
+        channel.send(command).await?;
+
+        // Build the stream — borrows channel, platform, and privilege_manager
+        // from self. We need to split the borrows manually.
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+        let stream = CommandStream::new(
+            channel,
+            &self.platform,
+            &mut self.privilege_manager,
+            command.to_string(),
+            self.prompt_pattern.clone(),
+            self.timeout,
+        );
+
+        Ok(stream)
     }
 
     /// Read until the prompt is matched, then determine current privilege.
