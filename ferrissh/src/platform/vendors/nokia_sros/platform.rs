@@ -82,7 +82,7 @@ pub fn platform() -> PlatformDefinition {
     // not_contains filters out config mode prompts (which have (ex), (ro), (gl), (pr)).
     let exec = PrivilegeLevel::new(
         "exec",
-        r"(?mi)^\[.*\]\n\*?[abcd]:[\w._]+@[\w\s_.-]+#\s?$",
+        r"(?mi)^\[.*\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
     )
     .unwrap()
     .with_not_contains("(ex)")
@@ -95,7 +95,7 @@ pub fn platform() -> PlatformDefinition {
     // Second line: optional * + CPM:user@host#
     let configuration = PrivilegeLevel::new(
         "configuration",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[/?\]\n\*?[abcd]:[\w._]+@[\w\s_.-]+#\s?$",
+        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
     )
     .unwrap()
     .with_parent("exec")
@@ -106,7 +106,7 @@ pub fn platform() -> PlatformDefinition {
     // Same as configuration but path has 2+ characters (e.g., [/configure router "Base"])
     let configuration_with_path = PrivilegeLevel::new(
         "configuration_with_path",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|\s){2,}\]\n\*?[abcd]:[\w._]+@[\w\s_.-]+#\s?$",
+        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|\s){2,}\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
     )
     .unwrap()
     .with_parent("exec")
@@ -200,11 +200,19 @@ mod tests {
         assert!(exec.pattern.is_match(b"[/]\nA:admin@router# "));
         assert!(exec.pattern.is_match(b"[/]\nB:admin@router#"));
 
+        // With \r\n line endings
+        assert!(exec.pattern.is_match(b"[/]\r\nA:admin@router#"));
+        assert!(exec.pattern.is_match(b"[/]\r\nA:svc-github-neo@use1.lm1#"));
+
+        // Hyphenated username
+        assert!(exec.pattern.is_match(b"[/]\nA:svc-github-neo@router#"));
+
         // With show context
         assert!(exec.pattern.is_match(b"[/show router interface]\nA:admin@node-2#"));
 
         // matches() filters out config mode via not_contains
         assert!(exec.matches("[/]\nA:admin@router#"));
+        assert!(exec.matches("[/]\r\nA:svc-github-neo@use1.lm1#"));
         assert!(!exec.matches("(ex)[/]\nA:admin@router#"));
         assert!(!exec.matches("(ro)[/]\nA:admin@router#"));
         assert!(!exec.matches("(gl)[/]\nA:admin@router#"));
@@ -222,6 +230,8 @@ mod tests {
         // Exclusive config at root
         assert!(config.pattern.is_match(b"(ex)[/]\nA:admin@router#"));
         assert!(config.pattern.is_match(b"(ex)[/]\nA:admin@router# "));
+        assert!(config.pattern.is_match(b"(ex)[/]\r\nA:admin@router#"));
+        assert!(config.pattern.is_match(b"(ex)[/]\r\nA:svc-github-neo@router#"));
 
         // With uncommitted changes indicator
         assert!(config.pattern.is_match(b"*(ex)[/]\nA:admin@router#"));
@@ -259,6 +269,9 @@ mod tests {
         assert!(config_path
             .pattern
             .is_match(b"(ex)[/configure]\nA:admin@router#"));
+        assert!(config_path
+            .pattern
+            .is_match(b"(ex)[/configure]\r\nA:svc-github-neo@router#"));
         assert!(config_path
             .pattern
             .is_match(b"(ex)[/configure router \"Base\"]\nA:admin@router#"));
