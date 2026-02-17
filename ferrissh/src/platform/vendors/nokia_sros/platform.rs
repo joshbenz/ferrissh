@@ -239,7 +239,11 @@ mod tests {
         assert!(config.pattern.is_match(b"(ex)[/]\nA:admin@router#"));
         assert!(config.pattern.is_match(b"(ex)[/]\nA:admin@router# "));
         assert!(config.pattern.is_match(b"(ex)[/]\r\nA:admin@router#"));
-        assert!(config.pattern.is_match(b"(ex)[/]\r\nA:svc-github-neo@router#"));
+        assert!(
+            config
+                .pattern
+                .is_match(b"(ex)[/]\r\nA:svc-github-neo@router#")
+        );
 
         // With uncommitted changes indicator
         assert!(config.pattern.is_match(b"*(ex)[/]\nA:admin@router#"));
