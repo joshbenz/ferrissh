@@ -3,10 +3,12 @@
 //! This module defines vendor-specific configurations including
 //! prompt patterns, privilege levels, and device behavior.
 
+pub mod confd;
 mod definition;
 mod privilege_level;
 pub mod vendors;
 
+pub use confd::{ConfDConfigSession, ConfDJStyleConfigSession};
 pub use definition::PlatformDefinition;
 pub use privilege_level::PrivilegeLevel;
 
@@ -36,6 +38,8 @@ pub enum Platform {
     AristaEos,
     /// Nokia SR OS (auto-detects MD-CLI vs Classic CLI).
     NokiaSros,
+    /// Arrcus ArcOS (ConfD J-style CLI).
+    ArrcusArcOs,
     /// User-provided platform definition.
     Custom(Box<PlatformDefinition>),
 }
@@ -47,6 +51,7 @@ impl From<Platform> for PlatformDefinition {
             Platform::JuniperJunos => vendors::juniper::platform(),
             Platform::AristaEos => vendors::arista::platform(),
             Platform::NokiaSros => vendors::nokia_sros::platform(),
+            Platform::ArrcusArcOs => vendors::arrcus_arcos::platform(),
             Platform::Custom(def) => *def,
         }
     }

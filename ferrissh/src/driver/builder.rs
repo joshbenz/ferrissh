@@ -36,6 +36,9 @@ pub struct DriverBuilder {
     normalize_output: bool,
     host_key_verification: HostKeyVerification,
     known_hosts_path: Option<PathBuf>,
+    keepalive_interval: Option<Option<Duration>>,
+    keepalive_max: Option<usize>,
+    inactivity_timeout: Option<Option<Duration>>,
 }
 
 impl DriverBuilder {
@@ -53,6 +56,9 @@ impl DriverBuilder {
             normalize_output: true,
             host_key_verification: HostKeyVerification::AcceptNew,
             known_hosts_path: None,
+            keepalive_interval: None,
+            keepalive_max: None,
+            inactivity_timeout: None,
         }
     }
 
@@ -152,6 +158,37 @@ impl DriverBuilder {
         self
     }
 
+    /// Set the SSH keepalive interval (default: 30 seconds).
+    ///
+    /// Sends SSH keepalive packets at this interval to prevent NAT/firewall
+    /// timeouts and detect dead peers. Set to `None` to disable.
+    pub fn keepalive_interval(mut self, interval: Option<Duration>) -> Self {
+        self.keepalive_interval = Some(interval);
+        self
+    }
+
+    /// Set the maximum number of unanswered keepalive packets before
+    /// disconnecting (default: 3).
+    ///
+    /// Only meaningful when keepalive is enabled.
+    pub fn keepalive_max(mut self, max: usize) -> Self {
+        self.keepalive_max = Some(max);
+        self
+    }
+
+    /// Set the session inactivity timeout.
+    ///
+    /// If set, the SSH session is closed after this duration of no data
+    /// in either direction. Default: `None` (no inactivity timeout).
+    ///
+    /// This is separate from the operation timeout set via [`timeout()`](Self::timeout).
+    /// Most users should leave this at `None` and rely on keepalive for
+    /// connection health.
+    pub fn inactivity_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.inactivity_timeout = Some(timeout);
+        self
+    }
+
     /// Build the driver.
     ///
     /// This creates the driver but does not connect. Call `open()` on the
@@ -186,6 +223,11 @@ impl DriverBuilder {
             terminal_height: self.terminal_height.unwrap_or(platform.terminal_height),
             host_key_verification: self.host_key_verification,
             known_hosts_path: self.known_hosts_path,
+            keepalive_interval: self
+                .keepalive_interval
+                .unwrap_or(Some(Duration::from_secs(30))),
+            keepalive_max: self.keepalive_max.unwrap_or(3),
+            inactivity_timeout: self.inactivity_timeout.unwrap_or(None),
         };
 
         Ok(GenericDriver::new(

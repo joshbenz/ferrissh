@@ -48,6 +48,32 @@ pub struct SshConfig {
 
     /// Path to known_hosts file.
     pub known_hosts_path: Option<PathBuf>,
+
+    /// SSH keepalive interval.
+    ///
+    /// When set, sends SSH keepalive packets at this interval to prevent
+    /// NAT/firewall timeouts and detect dead peers. Default: 30 seconds.
+    ///
+    /// Set to `None` to disable keepalive packets entirely.
+    pub keepalive_interval: Option<Duration>,
+
+    /// Maximum number of unanswered keepalive packets before disconnecting.
+    ///
+    /// If the remote peer does not respond to this many consecutive keepalive
+    /// packets, the connection is considered dead. Default: 3.
+    ///
+    /// Only meaningful when `keepalive_interval` is set.
+    pub keepalive_max: usize,
+
+    /// Session inactivity timeout.
+    ///
+    /// If set, the SSH session is closed after this duration of no data
+    /// in either direction. Default: `None` (no inactivity timeout).
+    ///
+    /// This is separate from the operation timeout (which controls how long
+    /// individual commands wait for a prompt). Most users should leave this
+    /// at `None` and rely on keepalive for connection health.
+    pub inactivity_timeout: Option<Duration>,
 }
 
 impl SshConfig {
