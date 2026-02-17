@@ -80,11 +80,10 @@ pub struct ConfDConfigSession<'a> {
 }
 
 impl<'a> ConfDConfigSession<'a> {
-    /// Enter ConfD J-style configuration mode.
+    /// Enter ConfD configuration mode.
     ///
     /// Validates the driver's platform matches `platform_name`, saves the
-    /// current privilege level, and escalates to `configuration` mode via
-    /// `configure`.
+    /// current privilege level, and escalates to `configuration` mode.
     ///
     /// Vendor modules typically wrap this with a convenience function that
     /// pre-fills `platform_name`.
