@@ -223,7 +223,9 @@ impl DriverBuilder {
             terminal_height: self.terminal_height.unwrap_or(platform.terminal_height),
             host_key_verification: self.host_key_verification,
             known_hosts_path: self.known_hosts_path,
-            keepalive_interval: self.keepalive_interval.unwrap_or(Some(Duration::from_secs(30))),
+            keepalive_interval: self
+                .keepalive_interval
+                .unwrap_or(Some(Duration::from_secs(30))),
             keepalive_max: self.keepalive_max.unwrap_or(3),
             inactivity_timeout: self.inactivity_timeout.unwrap_or(None),
         };

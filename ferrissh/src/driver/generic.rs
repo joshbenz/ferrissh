@@ -527,6 +527,10 @@ impl Driver for GenericDriver {
         self.transport.is_some() && self.channel.is_some()
     }
 
+    fn is_alive(&self) -> bool {
+        self.transport.as_ref().is_some_and(|t| t.is_alive())
+    }
+
     fn current_privilege(&self) -> Option<&str> {
         self.privilege_manager.current().map(|l| l.name.as_str())
     }

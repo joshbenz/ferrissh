@@ -209,6 +209,14 @@ impl SshTransport {
         }
     }
 
+    /// Check if the SSH session is still alive.
+    ///
+    /// Returns `false` if the background session task has exited (due to
+    /// keepalive timeout, I/O error, or server disconnect).
+    pub fn is_alive(&self) -> bool {
+        !self.session.is_closed()
+    }
+
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
         debug!(

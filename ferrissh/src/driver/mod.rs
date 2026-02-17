@@ -106,6 +106,32 @@ pub trait Driver: Send + Sync {
     /// Check if the driver is connected.
     fn is_open(&self) -> bool;
 
+    /// Check if the underlying SSH session is still alive.
+    ///
+    /// Returns `true` if the connection is open and the SSH session's
+    /// background task is still running. Returns `false` if:
+    /// - The driver is not connected (`open()` not called)
+    /// - The SSH keepalive timeout was exceeded (peer unresponsive)
+    /// - The server sent a disconnect
+    /// - An I/O error killed the session
+    ///
+    /// Use this to check connection health before sending commands,
+    /// especially after idle periods.
+    ///
+    /// ```rust,no_run
+    /// # use ferrissh::driver::Driver;
+    /// # async fn example(driver: &mut impl Driver) -> Result<(), ferrissh::Error> {
+    /// if !driver.is_alive() {
+    ///     println!("Connection lost, reconnecting...");
+    ///     driver.close().await.ok();
+    ///     driver.open().await?;
+    /// }
+    /// let response = driver.send_command("show version").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn is_alive(&self) -> bool;
+
     /// Get the current privilege level name.
     fn current_privilege(&self) -> Option<&str>;
 }
