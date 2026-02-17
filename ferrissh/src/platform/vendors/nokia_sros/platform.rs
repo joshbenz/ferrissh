@@ -278,20 +278,6 @@ mod tests {
             .unwrap();
 
         // Config with path
-<<<<<<< HEAD
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure]\nA:admin@router#"));
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure]\r\nA:svc-github-neo@router#"));
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure router \"Base\"]\nA:admin@router#"));
-        assert!(config_path
-            .pattern
-            .is_match(b"(ex)[/configure router \"Base\" bgp]\nA:admin@router#"));
-=======
         assert!(
             config_path
                 .pattern
@@ -307,7 +293,6 @@ mod tests {
                 .pattern
                 .is_match(b"(ex)[/configure router \"Base\" bgp]\nA:admin@router#")
         );
->>>>>>> 241188b79fa57fffc4d7935ba9c3303724267aaf
 
         // With uncommitted changes
         assert!(
