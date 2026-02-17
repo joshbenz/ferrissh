@@ -49,5 +49,7 @@ pub use driver::{
     Validatable, ValidationResult,
 };
 pub use error::Error;
-pub use platform::{ConfDJStyleConfigSession, Platform, PlatformDefinition, PrivilegeLevel};
+pub use platform::{
+    ConfDConfigSession, ConfDJStyleConfigSession, Platform, PlatformDefinition, PrivilegeLevel,
+};
 pub use transport::HostKeyVerification;

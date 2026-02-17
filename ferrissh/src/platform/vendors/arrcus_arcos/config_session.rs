@@ -1,7 +1,7 @@
 //! Arrcus ArcOS configuration session.
 //!
-//! ArcOS uses ConfD J-style CLI. This module re-exports the generic
-//! [`ConfDJStyleConfigSession`] and provides a convenience constructor.
+//! ArcOS uses ConfD C-style CLI. This module re-exports the generic
+//! [`ConfDConfigSession`] and provides a convenience constructor.
 //!
 //! # Example
 //!
@@ -35,24 +35,24 @@
 
 use crate::driver::GenericDriver;
 use crate::error::Result;
-use crate::platform::confd_jstyle::ConfDJStyleConfigSession;
+use crate::platform::confd::ConfDConfigSession;
 
 use super::platform::PLATFORM_NAME;
 
 /// Type alias for Arrcus ArcOS configuration sessions.
 ///
-/// ArcOS uses standard ConfD J-style CLI. See [`ConfDJStyleConfigSession`] for
+/// ArcOS uses ConfD C-style CLI. See [`ConfDConfigSession`] for
 /// full documentation of available methods.
-pub type ArrcusConfigSession<'a> = ConfDJStyleConfigSession<'a>;
+pub type ArrcusConfigSession<'a> = ConfDConfigSession<'a>;
 
 /// Create an Arrcus ArcOS configuration session.
 ///
-/// Convenience wrapper around [`ConfDJStyleConfigSession::new()`] that
+/// Convenience wrapper around [`ConfDConfigSession::new()`] that
 /// pre-fills the platform name. Equivalent to:
 ///
 /// ```rust,ignore
-/// ConfDJStyleConfigSession::new(driver, "arrcus_arcos").await
+/// ConfDConfigSession::new(driver, "arrcus_arcos").await
 /// ```
-pub async fn config_session(driver: &mut GenericDriver) -> Result<ConfDJStyleConfigSession<'_>> {
-    ConfDJStyleConfigSession::new(driver, PLATFORM_NAME).await
+pub async fn config_session(driver: &mut GenericDriver) -> Result<ConfDConfigSession<'_>> {
+    ConfDConfigSession::new(driver, PLATFORM_NAME).await
 }

@@ -3,12 +3,12 @@
 //! This module defines vendor-specific configurations including
 //! prompt patterns, privilege levels, and device behavior.
 
-pub mod confd_jstyle;
+pub mod confd;
 mod definition;
 mod privilege_level;
 pub mod vendors;
 
-pub use confd_jstyle::ConfDJStyleConfigSession;
+pub use confd::{ConfDConfigSession, ConfDJStyleConfigSession};
 pub use definition::PlatformDefinition;
 pub use privilege_level::PrivilegeLevel;
 

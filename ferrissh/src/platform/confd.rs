@@ -1,19 +1,18 @@
-//! Generic ConfD J-style configuration session.
+//! Generic ConfD configuration session.
 //!
 //! ConfD (Tail-f/Cisco) is a management framework for network devices that
 //! provides NETCONF/YANG support and generates CLI interfaces from YANG models.
-//! Its J-style CLI has standardized config session commands that are identical
-//! across all vendors using ConfD:
+//! ConfD supports both C-style and J-style CLIs, but the config session
+//! commands are identical regardless of CLI style:
 //!
 //! - Diff: `compare running-config`
 //! - Validate: `validate` (no output on success)
 //! - Commit: `commit`
 //! - Abort: `revert`
 //! - Confirmed commit: `commit confirmed <minutes>` (1–65535 range)
-//! - Config entry: `configure` / exit: `exit configuration-mode`
 //!
-//! Vendor-specific details (prompt patterns, on-open commands, failure patterns)
-//! remain in each vendor's `platform.rs`.
+//! The CLI style only affects prompts and navigation commands (how you enter
+//! and exit config mode), which are defined in each vendor's `platform.rs`.
 //!
 //! # Usage
 //!
@@ -59,9 +58,12 @@ use crate::driver::response::Response;
 use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 
-/// ConfD J-style configuration session guard.
+/// ConfD configuration session guard.
 ///
-/// Provides RAII-guarded access to any ConfD J-style candidate configuration.
+/// Provides RAII-guarded access to any ConfD candidate configuration.
+/// Works with both C-style and J-style ConfD CLIs — the config session
+/// commands are identical; only the prompts differ (defined in `platform.rs`).
+///
 /// Holds `&mut GenericDriver` to prevent concurrent driver use.
 /// Implements [`ConfigSession`], [`Diffable`], [`Validatable`], and [`ConfirmableCommit`].
 ///
@@ -70,14 +72,14 @@ use crate::error::{DriverError, Result};
 /// After calling [`detach()`](ConfigSession::detach), the driver remains in
 /// configuration mode. Create a new session to re-attach —
 /// `acquire_privilege("configuration")` is a no-op if already in config mode.
-pub struct ConfDJStyleConfigSession<'a> {
+pub struct ConfDConfigSession<'a> {
     driver: &'a mut GenericDriver,
     original_privilege: String,
     platform_name: &'static str,
     consumed: bool,
 }
 
-impl<'a> ConfDJStyleConfigSession<'a> {
+impl<'a> ConfDConfigSession<'a> {
     /// Enter ConfD J-style configuration mode.
     ///
     /// Validates the driver's platform matches `platform_name`, saves the
@@ -91,7 +93,7 @@ impl<'a> ConfDJStyleConfigSession<'a> {
         if driver.platform().name != platform_name {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "ConfD J-style config session requires platform '{}', got '{}'",
+                    "ConfD config session requires platform '{}', got '{}'",
                     platform_name,
                     driver.platform().name
                 ),
@@ -106,7 +108,7 @@ impl<'a> ConfDJStyleConfigSession<'a> {
             .unwrap_or_default();
 
         debug!(
-            "entering ConfD J-style config session for {} (from {:?})",
+            "entering ConfD config session for {} (from {:?})",
             platform_name, original_privilege
         );
 
@@ -141,7 +143,7 @@ impl<'a> ConfDJStyleConfigSession<'a> {
     }
 }
 
-impl ConfigSession for ConfDJStyleConfigSession<'_> {
+impl ConfigSession for ConfDConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
         self.driver.send_command(cmd).await
     }
@@ -176,7 +178,7 @@ impl ConfigSession for ConfDJStyleConfigSession<'_> {
     }
 }
 
-impl Diffable for ConfDJStyleConfigSession<'_> {
+impl Diffable for ConfDConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("{} config session: diff", self.platform_name);
         let response = self.driver.send_command("compare running-config").await?;
@@ -184,7 +186,7 @@ impl Diffable for ConfDJStyleConfigSession<'_> {
     }
 }
 
-impl Validatable for ConfDJStyleConfigSession<'_> {
+impl Validatable for ConfDConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
         debug!("{} config session: validate", self.platform_name);
         let response = self.driver.send_command("validate").await?;
@@ -215,7 +217,7 @@ impl Validatable for ConfDJStyleConfigSession<'_> {
     }
 }
 
-impl ConfirmableCommit for ConfDJStyleConfigSession<'_> {
+impl ConfirmableCommit for ConfDConfigSession<'_> {
     async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
         debug!(
             "{} config session: commit_confirmed ({:?})",
@@ -256,16 +258,23 @@ impl ConfirmableCommit for ConfDJStyleConfigSession<'_> {
     }
 }
 
-impl Drop for ConfDJStyleConfigSession<'_> {
+impl Drop for ConfDConfigSession<'_> {
     fn drop(&mut self) {
         if !self.consumed {
             warn!(
-                "ConfDJStyleConfigSession ({}) dropped without commit/abort/detach",
+                "ConfDConfigSession ({}) dropped without commit/abort/detach",
                 self.platform_name
             );
         }
     }
 }
+
+/// Backwards-compatible alias for J-style ConfD vendors.
+///
+/// The config session commands are identical for both C-style and J-style
+/// ConfD CLIs. This alias exists so that code written for J-style vendors
+/// continues to compile without changes.
+pub type ConfDJStyleConfigSession<'a> = ConfDConfigSession<'a>;
 
 #[cfg(test)]
 mod tests {

@@ -1,17 +1,15 @@
 //! Arrcus ArcOS platform definition.
 //!
-//! ArcOS is built on ConfD (Tail-f/Cisco) with a J-style CLI. ConfD is a
+//! ArcOS is built on ConfD (Tail-f/Cisco) with a C-style CLI. ConfD is a
 //! management framework for network devices that provides NETCONF/YANG support
 //! and generates CLI interfaces from YANG models.
 //!
-//! The J-style CLI mode in ConfD mimics Juniper's CLI conventions:
-//! - `user@host>` exec prompt, `user@host%` config prompt
+//! ArcOS uses the ConfD C-style CLI mode:
+//! - `user@host#` exec prompt
+//! - `user@host(config)#` config prompt
 //! - Candidate configuration model (commit/rollback/validate/diff)
-//! - Commands like `configure`, `commit`, `revert`, `validate`, `compare running-config`
+//! - Commands like `config`, `commit`, `revert`, `validate`, `compare running-config`
 //! - Terminal settings like `set cli screen-width`, `set cli screen-length`
-//!
-//! Note: ConfD J-style uses `%` for config mode, NOT `#` (which is Juniper JUNOS).
-//! This is confirmed from the ConfD default `prompt2 = \u@\h\M \t%`.
 
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
 
@@ -19,15 +17,21 @@ pub const PLATFORM_NAME: &str = "arrcus_arcos";
 
 /// Create the Arrcus ArcOS platform definition.
 pub fn platform() -> PlatformDefinition {
-    // Exec (operational) mode: user@host>
-    let exec = PrivilegeLevel::new("exec", r"(?mi)^[\w\-.@()/:]{1,63}>\s?$").unwrap();
-
-    // Configuration mode: user@host%
-    let configuration = PrivilegeLevel::new("configuration", r"(?mi)^[\w\-.@()/:]{1,63}%\s?$")
+    // Exec (operational) mode: user@host#
+    // not_contains "(config" prevents matching config mode prompts
+    let exec = PrivilegeLevel::new("exec", r"(?mi)^[\w\-.@()/:]{1,63}#\s?$")
         .unwrap()
-        .with_parent("exec")
-        .with_escalate("configure")
-        .with_deescalate("exit configuration-mode");
+        .with_not_contains("(config");
+
+    // Configuration mode: user@host(config)# or user@host(config-xxx)#
+    let configuration = PrivilegeLevel::new(
+        "configuration",
+        r"(?mi)^[\w\-.@()/:]{1,63}\(config[\w.\-@/:]{0,32}\)#\s?$",
+    )
+    .unwrap()
+    .with_parent("exec")
+    .with_escalate("config")
+    .with_deescalate("exit");
 
     PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)
@@ -59,16 +63,17 @@ mod tests {
         let p = platform();
         let exec = p.get_privilege("exec").unwrap();
 
-        assert!(exec.pattern.is_match(b"clab@router>"));
-        assert!(exec.pattern.is_match(b"clab@router> "));
-        assert!(exec.pattern.is_match(b"admin@leaf-1>"));
-        assert!(exec.pattern.is_match(b"admin@leaf-1> "));
-        assert!(exec.pattern.is_match(b"admin@spine.lab>"));
-        assert!(exec.pattern.is_match(b"root@host>"));
+        // Standard exec prompts
+        assert!(exec.pattern.is_match(b"jbenz@use11-ngn.da51#"));
+        assert!(exec.pattern.is_match(b"jbenz@use11-ngn.da51# "));
+        assert!(exec.pattern.is_match(b"admin@router#"));
+        assert!(exec.pattern.is_match(b"admin@router# "));
+        assert!(exec.pattern.is_match(b"clab@leaf-1#"));
+        assert!(exec.pattern.is_match(b"root@host#"));
 
-        // Should NOT match config prompt
-        assert!(!exec.pattern.is_match(b"clab@router%"));
-        assert!(!exec.pattern.is_match(b"admin@leaf-1%"));
+        // Should NOT match config prompt (regex matches, but not_contains filters)
+        assert!(!exec.matches("jbenz@use11-ngn.da51(config)#"));
+        assert!(!exec.matches("admin@router(config)#"));
     }
 
     #[test]
@@ -76,16 +81,34 @@ mod tests {
         let p = platform();
         let config = p.get_privilege("configuration").unwrap();
 
-        assert!(config.pattern.is_match(b"clab@router%"));
-        assert!(config.pattern.is_match(b"clab@router% "));
-        assert!(config.pattern.is_match(b"admin@leaf-1%"));
-        assert!(config.pattern.is_match(b"admin@leaf-1% "));
-        assert!(config.pattern.is_match(b"admin@spine.lab%"));
-        assert!(config.pattern.is_match(b"root@host%"));
+        // Standard config prompts
+        assert!(config.pattern.is_match(b"jbenz@use11-ngn.da51(config)#"));
+        assert!(config.pattern.is_match(b"jbenz@use11-ngn.da51(config)# "));
+        assert!(config.pattern.is_match(b"admin@router(config)#"));
+        assert!(config.pattern.is_match(b"admin@router(config)# "));
+        assert!(config.pattern.is_match(b"clab@leaf-1(config)#"));
+
+        // Config sub-modes (if they exist)
+        assert!(config.pattern.is_match(b"admin@router(config-if)#"));
+        assert!(config.pattern.is_match(b"admin@router(config-router)#"));
 
         // Should NOT match exec prompt
-        assert!(!config.pattern.is_match(b"clab@router>"));
-        assert!(!config.pattern.is_match(b"admin@leaf-1>"));
+        assert!(!config.pattern.is_match(b"jbenz@use11-ngn.da51#"));
+        assert!(!config.pattern.is_match(b"admin@router#"));
+    }
+
+    #[test]
+    fn test_real_device_prompts() {
+        let p = platform();
+        let exec = p.get_privilege("exec").unwrap();
+        let config = p.get_privilege("configuration").unwrap();
+
+        // Real device prompt from user
+        assert!(exec.matches("jbenz@use11-ngn.da51#"));
+        assert!(!exec.matches("jbenz@use11-ngn.da51(config)#"));
+
+        assert!(config.matches("jbenz@use11-ngn.da51(config)#"));
+        assert!(!config.matches("jbenz@use11-ngn.da51#"));
     }
 
     #[test]
@@ -94,11 +117,8 @@ mod tests {
         let config = p.get_privilege("configuration").unwrap();
 
         assert_eq!(config.previous_priv.as_deref(), Some("exec"));
-        assert_eq!(config.escalate_command.as_deref(), Some("configure"));
-        assert_eq!(
-            config.deescalate_command.as_deref(),
-            Some("exit configuration-mode")
-        );
+        assert_eq!(config.escalate_command.as_deref(), Some("config"));
+        assert_eq!(config.deescalate_command.as_deref(), Some("exit"));
     }
 
     #[test]
