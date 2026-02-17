@@ -104,8 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.show_config {
         println!("--- Named Config Session Demo ---\n");
 
-        use ferrissh::{ConfigSession, Diffable};
         use ferrissh::platform::vendors::arista::AristaConfigSession;
+        use ferrissh::{ConfigSession, Diffable};
 
         // Create a named session (isolated from other users)
         let mut session = AristaConfigSession::new(&mut driver, "ferrissh-demo").await?;

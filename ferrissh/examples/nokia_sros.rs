@@ -127,8 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.show_config {
         println!("\n--- Config Session Demo (MD-CLI) ---\n");
 
-        use ferrissh::{ConfigSession, Diffable, Validatable};
         use ferrissh::platform::vendors::nokia_sros::NokiaConfigSession;
+        use ferrissh::{ConfigSession, Diffable, Validatable};
 
         match NokiaConfigSession::new(&mut driver).await {
             Ok(mut session) => {
