@@ -196,7 +196,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     async fn commit(mut self) -> Result<()> {
         debug!("generic config session: commit");
         self.consumed = true;
-        if self.original_privilege != self.config_privilege {
+        if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;
@@ -207,7 +207,7 @@ impl ConfigSession for GenericConfigSession<'_> {
     async fn abort(mut self) -> Result<()> {
         debug!("generic config session: abort");
         self.consumed = true;
-        if self.original_privilege != self.config_privilege {
+        if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;

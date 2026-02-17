@@ -150,18 +150,20 @@ impl<'a> AristaConfigSession<'a> {
             .remove_dynamic_level(&self.session_priv_name);
         self.driver.rebuild_prompt_pattern();
 
-        // Restore original privilege if different from current
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
 
-        if current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())

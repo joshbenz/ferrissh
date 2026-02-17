@@ -124,7 +124,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
-        if current != self.original_privilege {
+        if !self.original_privilege.is_empty() && current != self.original_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;
@@ -148,7 +148,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
-        if current != self.original_privilege {
+        if !self.original_privilege.is_empty() && current != self.original_privilege {
             self.driver
                 .acquire_privilege(&self.original_privilege)
                 .await?;

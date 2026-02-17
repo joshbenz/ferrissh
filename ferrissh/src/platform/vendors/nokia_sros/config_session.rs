@@ -139,18 +139,20 @@ impl ConfigSession for NokiaConfigSession<'_> {
         // Exit config mode
         self.driver.send_command("quit-config").await?;
 
-        // Restore original privilege if needed
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
 
-        if current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -166,18 +168,20 @@ impl ConfigSession for NokiaConfigSession<'_> {
         // Exit config mode
         self.driver.send_command("quit-config").await?;
 
-        // Restore original privilege if needed
-        let current = self
-            .driver
-            .privilege_manager()
-            .current()
-            .map(|l| l.name.clone())
-            .unwrap_or_default();
+        // Restore original privilege if known and different from current
+        if !self.original_privilege.is_empty() {
+            let current = self
+                .driver
+                .privilege_manager()
+                .current()
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
 
-        if current != self.original_privilege {
-            self.driver
-                .acquire_privilege(&self.original_privilege)
-                .await?;
+            if current != self.original_privilege {
+                self.driver
+                    .acquire_privilege(&self.original_privilege)
+                    .await?;
+            }
         }
 
         Ok(())
