@@ -105,25 +105,32 @@ mod tests {
     fn test_failure_patterns() {
         let p = platform();
         assert!(p.failed_when_contains.contains(&"syntax error".to_string()));
-        assert!(p.failed_when_contains.contains(&"unknown command".to_string()));
+        assert!(
+            p.failed_when_contains
+                .contains(&"unknown command".to_string())
+        );
         assert!(p.failed_when_contains.contains(&"is ambiguous".to_string()));
-        assert!(p
-            .failed_when_contains
-            .contains(&"No valid completions".to_string()));
+        assert!(
+            p.failed_when_contains
+                .contains(&"No valid completions".to_string())
+        );
     }
 
     #[test]
     fn test_on_open_commands() {
         let p = platform();
         assert_eq!(p.on_open_commands.len(), 3);
-        assert!(p
-            .on_open_commands
-            .contains(&"set cli screen-width 511".to_string()));
-        assert!(p
-            .on_open_commands
-            .contains(&"set cli screen-length 0".to_string()));
-        assert!(p
-            .on_open_commands
-            .contains(&"set cli complete-on-space off".to_string()));
+        assert!(
+            p.on_open_commands
+                .contains(&"set cli screen-width 511".to_string())
+        );
+        assert!(
+            p.on_open_commands
+                .contains(&"set cli screen-length 0".to_string())
+        );
+        assert!(
+            p.on_open_commands
+                .contains(&"set cli complete-on-space off".to_string())
+        );
     }
 }
