@@ -250,10 +250,7 @@ mod tests {
         assert_eq!(format_cmd(Duration::from_secs(600)), "commit confirmed 10");
 
         // 1 hour
-        assert_eq!(
-            format_cmd(Duration::from_secs(3600)),
-            "commit confirmed 60"
-        );
+        assert_eq!(format_cmd(Duration::from_secs(3600)), "commit confirmed 60");
     }
 
     #[test]
