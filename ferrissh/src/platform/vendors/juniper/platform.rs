@@ -47,6 +47,9 @@ use std::sync::Arc;
 
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 
+/// Platform name for Juniper JUNOS.
+pub const PLATFORM_NAME: &str = "juniper_junos";
+
 /// Create the Juniper JUNOS platform definition.
 ///
 /// Prompt patterns adapted from scrapli's JunOS driver.
@@ -86,7 +89,7 @@ pub fn platform() -> PlatformDefinition {
         .with_auth(r"(?i)^password:\s?$")
         .unwrap();
 
-    PlatformDefinition::new("juniper_junos")
+    PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)
         .with_privilege(configuration)
         .with_privilege(shell)
