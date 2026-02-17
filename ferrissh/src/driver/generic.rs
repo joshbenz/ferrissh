@@ -440,14 +440,27 @@ impl Driver for GenericDriver {
         // Save current privilege level
         let original_privilege = self.privilege_manager.current().map(|l| l.name.clone());
 
-        // Find the configuration privilege level
-        // Look for a level with "config" in the name, or use platform's default
-        let config_privilege = self
-            .platform
-            .privilege_levels
-            .keys()
-            .find(|name| name.to_lowercase().contains("config"))
-            .cloned();
+        // Find a configuration privilege level reachable from the current position.
+        // For platforms with disconnected subgraphs (e.g., Nokia SROS with both
+        // MD-CLI and Classic CLI), this ensures we pick the right config level.
+        let config_privilege = if let Some(ref current_name) = original_privilege {
+            self.platform
+                .privilege_levels
+                .keys()
+                .filter(|name| name.to_lowercase().contains("config"))
+                .find(|name| {
+                    self.privilege_manager
+                        .find_path(current_name, name)
+                        .is_ok()
+                })
+                .cloned()
+        } else {
+            self.platform
+                .privilege_levels
+                .keys()
+                .find(|name| name.to_lowercase().contains("config"))
+                .cloned()
+        };
 
         if let Some(config_priv) = config_privilege {
             // Acquire configuration privilege
