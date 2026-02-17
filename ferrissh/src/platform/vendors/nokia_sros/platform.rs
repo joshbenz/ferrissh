@@ -130,7 +130,7 @@ pub fn platform() -> PlatformDefinition {
     // not_contains "@" prevents matching MD-CLI prompts
     let classic_configuration = PrivilegeLevel::new(
         "classic_configuration",
-        r"(?mi)^\*?[abcd]:[\w\s_.-]+>config[\w>]*(#|\$)\s?$",
+        r"(?mi)^\*?[abcd]:[\w\s_.-]+>config[\w>./-]*(#|\$)\s?$",
     )
     .unwrap()
     .with_parent("classic_exec")
@@ -381,6 +381,23 @@ mod tests {
                 .is_match(b"*A:router>config>router>bgp#")
         );
         assert!(classic_config.pattern.is_match(b"A:router>config>service#"));
+
+        // Contexts containing dashes, dots, and slashes
+        assert!(
+            classic_config
+                .pattern
+                .is_match(b"A:router>config>router>isis-1#")
+        );
+        assert!(
+            classic_config
+                .pattern
+                .is_match(b"A:router>config>port>1/1/1#")
+        );
+        assert!(
+            classic_config
+                .pattern
+                .is_match(b"A:router>config>router>mpls>lsp>to-pe2.lab#")
+        );
 
         // New context ($ instead of #)
         assert!(classic_config.pattern.is_match(b"A:router>config>router$"));
