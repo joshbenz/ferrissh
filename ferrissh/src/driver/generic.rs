@@ -6,6 +6,7 @@ use regex::Regex as TextRegex;
 use regex::bytes::Regex;
 
 use super::Driver;
+use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
@@ -107,6 +108,35 @@ impl GenericDriver {
     /// Set the default timeout.
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
+    }
+
+    /// Rebuild the combined prompt pattern from current privilege levels.
+    ///
+    /// Must be called after registering or removing dynamic privilege levels
+    /// so the driver can recognize new prompt patterns.
+    pub fn rebuild_prompt_pattern(&mut self) {
+        let patterns: Vec<String> = self
+            .privilege_manager
+            .levels()
+            .values()
+            .map(|level| format!("(?:{})", level.pattern.as_str()))
+            .collect();
+
+        let combined = patterns.join("|");
+        self.prompt_pattern =
+            Regex::new(&combined).unwrap_or_else(|_| Regex::new(r"[$#>]\s*$").unwrap());
+    }
+
+    /// Enter a generic configuration session.
+    ///
+    /// Returns an RAII guard that holds `&mut self`, preventing concurrent
+    /// driver use during the session. Works for any vendor with a config
+    /// privilege level.
+    ///
+    /// For vendor-specific features (named sessions, diff), use the vendor's
+    /// own session type (e.g., `AristaConfigSession::new(&mut driver, "name")`).
+    pub async fn config_session(&mut self) -> Result<GenericConfigSession<'_>> {
+        GenericConfigSession::new(self).await
     }
 
     /// Read until the prompt is matched, then determine current privilege.
