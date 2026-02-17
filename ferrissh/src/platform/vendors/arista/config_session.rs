@@ -32,7 +32,9 @@
 
 use log::warn;
 
-use crate::driver::config_session::{ConfigSession, Diffable, NamedSession};
+use std::time::Duration;
+
+use crate::driver::config_session::{ConfigSession, ConfirmableCommit, Diffable, NamedSession};
 use crate::driver::response::Response;
 use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
@@ -197,6 +199,32 @@ impl Diffable for AristaConfigSession<'_> {
     }
 }
 
+impl ConfirmableCommit for AristaConfigSession<'_> {
+    async fn commit_confirmed(&mut self, timeout: Duration) -> Result<()> {
+        let total = timeout.as_secs();
+
+        if total < 60 {
+            return Err(DriverError::InvalidConfig {
+                message: format!(
+                    "Arista commit timer minimum is 1 minute, got {} seconds",
+                    total
+                ),
+            }
+            .into());
+        }
+
+        let cmd = format!(
+            "commit timer {:02}:{:02}:{:02}",
+            total / 3600,
+            (total % 3600) / 60,
+            total % 60,
+        );
+        self.driver.send_command(&cmd).await?;
+
+        Ok(())
+    }
+}
+
 impl NamedSession for AristaConfigSession<'_> {
     fn session_name(&self) -> &str {
         &self.session_name
@@ -274,5 +302,46 @@ mod tests {
         assert!(re.is_match(b"switch(config-s-mytest)#"));
         // Longer names that start with "mytest" also match
         assert!(re.is_match(b"switch(config-s-mytest-extra)#"));
+    }
+
+    #[test]
+    fn test_commit_timer_formatting() {
+        use std::time::Duration;
+
+        // Helper to format duration the same way the impl does
+        fn format_timer(timeout: Duration) -> String {
+            let total = timeout.as_secs();
+            format!(
+                "commit timer {:02}:{:02}:{:02}",
+                total / 3600,
+                (total % 3600) / 60,
+                total % 60,
+            )
+        }
+
+        assert_eq!(
+            format_timer(Duration::from_secs(60)),
+            "commit timer 00:01:00"
+        );
+        assert_eq!(
+            format_timer(Duration::from_secs(300)),
+            "commit timer 00:05:00"
+        );
+        assert_eq!(
+            format_timer(Duration::from_secs(301)),
+            "commit timer 00:05:01"
+        );
+        assert_eq!(
+            format_timer(Duration::from_secs(3600)),
+            "commit timer 01:00:00"
+        );
+        assert_eq!(
+            format_timer(Duration::from_secs(3661)),
+            "commit timer 01:01:01"
+        );
+        assert_eq!(
+            format_timer(Duration::from_secs(86400)),
+            "commit timer 24:00:00"
+        );
     }
 }

@@ -27,6 +27,7 @@
 //! ```
 
 use std::future::Future;
+use std::time::Duration;
 
 use log::warn;
 
@@ -80,10 +81,20 @@ pub trait Validatable: ConfigSession {
 }
 
 /// Sessions that support confirmed commits with auto-rollback.
+///
+/// After `commit_confirmed`, the config is active but will auto-rollback
+/// after `timeout` unless confirmed with a normal `commit()`.
+///
+/// Each vendor converts the `Duration` to its native format:
+/// - Arista: `commit timer hh:mm:ss`
+/// - Juniper: `commit confirmed <minutes>`
+/// - Cisco IOS-XR: `commit confirmed <seconds>`
 pub trait ConfirmableCommit: ConfigSession {
-    /// Commit with automatic rollback after `timeout_minutes` if not confirmed.
-    fn commit_confirmed(&mut self, timeout_minutes: u32)
-    -> impl Future<Output = Result<()>> + Send;
+    /// Commit with automatic rollback after `timeout` if not confirmed.
+    ///
+    /// The vendor implementation converts the duration to its native format
+    /// and returns an error if the value is out of the vendor's allowed range.
+    fn commit_confirmed(&mut self, timeout: Duration) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Named configuration sessions.
