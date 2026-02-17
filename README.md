@@ -6,21 +6,21 @@ An async SSH CLI scraper library for network device automation in Rust.
 [![Documentation](https://docs.rs/ferrissh/badge.svg)](https://docs.rs/ferrissh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Warning:** This library is EXTREMELY experimental and under active development. The API is subject to change without notice. Use in production at your own risk. And I mean really, I have not tried sending actual configuration yet!
+> **Warning:** This library is EXTREMELY experimental and under active development. The API is subject to change without notice. Use in production at your own risk.
 
 Ferrissh provides a high-level async API for interacting with network devices over SSH, heavily inspired by Python's [scrapli](https://github.com/carlmontanari/scrapli) and [netmiko](https://github.com/ktbyers/netmiko) libraries.
 
 ## Features
 
 - **Async/Await** - Built on Tokio and russh for efficient async SSH connections
-- **Multi-Vendor Support** - Linux, Juniper JUNOS, with more coming
+- **Multi-Vendor Support** - Linux, Juniper JUNOS, Arista EOS, Nokia SR OS, Arrcus ArcOS
 - **Privilege Management** - Automatic navigation between privilege levels
+- **Config Sessions** - RAII-guarded config sessions with commit, abort, diff, validate, and confirmed commit
+- **ConfD Support** - Generic ConfD config session shared by both C-style and J-style CLI vendors
 - **Interactive Commands** - Handle prompts requiring user input (confirmations, passwords)
 - **Configuration Mode** - Automatic privilege escalation for config commands
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
-- **Output Normalization** - Clean output with command echo and prompt stripping
-- **Error Detection** - Vendor-specific failure pattern detection
-- **Easy Extensibility** - Add custom platforms with minimal code
+- **Data-Driven Platforms** - Platforms are pure data (prompts, privilege graphs, failure patterns) with optional extension traits for configuration sessions
 
 ## Installation
 
@@ -28,7 +28,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferrissh = "0.1"
+ferrissh = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -57,14 +57,37 @@ async fn main() -> Result<(), ferrissh::Error> {
 }
 ```
 
-## Supported Platforms
+## Built in Platforms
 
-| Platform | Name | Privilege Levels |
-|----------|------|------------------|
-| Linux/Unix | `linux` | user (`$`), root (`#`) |
-| Juniper JUNOS | `juniper` | exec (`>`), configuration (`#`), shell (`%`) |
+| Platform | Enum Variant | Privilege Levels | Config Session |
+|----------|-------------|------------------|----------------|
+| Linux/Unix | `Platform::Linux` | user (`$`), root (`#`) | - |
+| Juniper JUNOS | `Platform::JuniperJunos` | exec (`>`), configuration (`#`), shell (`%`) | `JuniperConfigSession` |
+| Arista EOS | `Platform::AristaEos` | exec (`>`), privileged (`#`), configuration (`(config)#`) | `AristaConfigSession` |
+| Nokia SR OS | `Platform::NokiaSros` | exec (`#`), configuration (`(ex)[]#`), MD-CLI and Classic CLI | `NokiaSrosConfigSession` |
+| Arrcus ArcOS | `Platform::ArrcusArcOs` | exec (`#`), configuration (`(config)#`), ConfD C-style CLI | `ConfDConfigSession` |
 
+### Config Session Management
 
+Config sessions are **RAII-guarded transactions** that hold `&mut Driver`, preventing concurrent use at compile time. The `commit()` and `abort()` methods consume the session by value, enforcing single-use.
+
+Ferrissh uses **extension traits** to express what each vendor's config session supports:
+
+| Trait | Description | Vendors |
+|-------|-------------|---------|
+| `ConfigSession` | Core trait: `send_command`, `commit`, `abort`, `detach` | All |
+| `Diffable` | View uncommitted changes (`diff()`) | Juniper, Arista, Nokia, ConfD |
+| `Validatable` | Validate config before commit (`validate()`) | Juniper, Arista, Nokia, ConfD |
+| `ConfirmableCommit` | Auto-rollback commit (`commit_confirmed(timeout)`) | Juniper, Arista, ConfD |
+| `NamedSession` | Named/isolated config sessions (`session_name()`) | Arista |
+
+Each vendor implements only the traits it supports — the type system prevents calling features the vendor doesn't have.
+
+### ConfD Support
+
+Ferrissh includes a generic `ConfDConfigSession` that works with any vendor using Tail-f/Cisco ConfD as their management framework. The config session commands (`commit`, `revert`, `validate`, `compare running-config`, `commit confirmed`) are identical for both C-style and J-style ConfD CLIs — only the prompts and navigation commands differ, which are defined in each vendor's platform definition.
+
+Arrcus ArcOS uses this generic ConfD session directly. Future ConfD-based vendors can reuse it with just a platform definition — no new config session code needed.
 
 ## Usage Examples
 
@@ -130,6 +153,36 @@ for response in &responses {
 }
 ```
 
+### Config Sessions (RAII-guarded)
+
+Config sessions provide RAII-guarded access to device configuration with
+commit, abort, diff, validate, and confirmed commit support:
+
+```rust
+use ferrissh::{ConfigSession, Diffable, Validatable, Driver};
+use ferrissh::platform::vendors::juniper::JuniperConfigSession;
+
+let mut driver = connect_juniper().await;
+
+// Create a config session (enters config mode)
+let mut session = JuniperConfigSession::new(&mut driver).await?;
+
+// Make changes
+session.send_command("set interfaces lo0 description 'test'").await?;
+
+// Review pending changes
+let diff = session.diff().await?;
+println!("Changes:\n{}", diff);
+
+// Validate before committing
+let result = session.validate().await?;
+if result.valid {
+    session.commit().await?;  // Commits and exits config mode
+} else {
+    session.abort().await?;   // Discards changes and exits config mode
+}
+```
+
 ### Interactive Commands
 
 Handle commands that require confirmation or input:
@@ -178,46 +231,6 @@ driver.send_command("set system host-name new-router").await?;
 driver.acquire_privilege("exec").await?;
 ```
 
-### Custom Timeouts
-
-```rust
-use std::time::Duration;
-
-let driver = DriverBuilder::new("slow-device.example.com")
-    .username("admin")
-    .password("secret")
-    .platform(Platform::JuniperJunos)
-    .timeout(Duration::from_secs(60))  // 60 second timeout
-    .build()?;
-```
-
-### Error Handling
-
-```rust
-let response = driver.send_command("show interfces").await?;  // Typo
-
-if response.failed {
-    println!("Command failed!");
-    println!("Error: {:?}", response.failure_message);
-    println!("Raw output: {}", response.raw_result);
-} else {
-    println!("Success: {}", response.result);
-}
-```
-
-## Response Structure
-
-```rust
-pub struct Response {
-    pub command: String,           // The command that was sent
-    pub result: String,            // Normalized output
-    pub raw_result: String,        // Raw output before normalization
-    pub prompt: String,            // The prompt after command completed
-    pub elapsed: Duration,         // Time taken for command
-    pub failed: bool,              // Whether the command failed
-    pub failure_message: Option<String>,  // Error message if failed
-}
-```
 
 ## Parsing Output with TextFSM
 
@@ -294,20 +307,20 @@ for disk in &disks {
 
 See the [textfsm_parsing example](ferrissh/examples/textfsm_parsing.rs) for a complete demonstration with templates for Linux and Juniper commands.
 
-## Adding Custom Platforms
+### Adding a Custom Platform
 
 ```rust
 use ferrissh::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 use std::sync::Arc;
 
-// Define privilege levels
+// Define privilege levels with prompt patterns
 let exec = PrivilegeLevel::new("exec", r"[\w@]+>\s*$")?;
 let config = PrivilegeLevel::new("config", r"[\w@]+#\s*$")?
     .with_parent("exec")
     .with_escalate("configure")
     .with_deescalate("exit");
 
-// Create platform
+// Create platform definition — pure data, no driver code needed
 let platform = PlatformDefinition::new("my_vendor")
     .with_privilege(exec)
     .with_privilege(config)
@@ -364,6 +377,34 @@ cargo run --example juniper -- --host router1 --user admin --password secret
 cargo run --example juniper -- --host router1 --user admin --key ~/.ssh/id_rsa --show-config
 ```
 
+### nokia_sros - Nokia SR OS
+
+Demonstrates connecting to Nokia SR OS devices with auto-detection of MD-CLI vs Classic CLI.
+
+```bash
+cargo run --example nokia_sros -- --host pe1 --user admin --password admin
+```
+
+### arista_eos - Arista EOS
+
+Demonstrates connecting to Arista EOS switches and running operational commands.
+
+```bash
+cargo run --example arista_eos -- --host switch1 --user admin --password secret
+```
+
+### config_session - Config Sessions
+
+Demonstrates RAII-guarded config sessions with diff, validate, commit, and abort.
+
+```bash
+# Juniper config session
+cargo run --example config_session -- --host router1 --user admin --password secret --platform juniper
+
+# Nokia SR OS config session
+cargo run --example config_session -- --host pe1 --user admin --password admin --platform nokia
+```
+
 ### interactive - Interactive Commands
 
 Shows how to handle commands that require user input or confirmation prompts.
@@ -418,10 +459,23 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
 ### Platform Support
 
-- [ ] Juniper JUNOS (in progress)
-- [ ] Nokia SR OS
-- [ ] Arista EOS
-- [ ] Arrcus ArcOS
+- [x] Juniper JUNOS
+- [x] Nokia SR OS
+- [x] Arista EOS
+- [x] Arrcus ArcOS
+
+### Config Sessions
+
+- [x] RAII-guarded config sessions (commit/abort/detach)
+- [x] Diff support
+- [x] Validate support
+- [x] Confirmed commit support
+- [x] Generic ConfD config session (shared by C-style and J-style vendors)
+
+### Connection Management
+
+- [x] SSH keepalive configuration
+- [x] Connection health checks (`is_alive()`)
 
 ### Macros & Compile-Time Safety
 
