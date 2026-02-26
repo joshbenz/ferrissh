@@ -46,9 +46,9 @@ pub mod transport;
 pub use driver::{
     ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder, GenericConfigSession,
     GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult, NamedSession, Response,
-    Validatable, ValidationResult,
+    SessionState, Validatable, ValidationResult,
 };
-pub use error::Error;
+pub use error::{DisconnectReason, Error};
 pub use platform::{
     ConfDConfigSession, ConfDJStyleConfigSession, Platform, PlatformDefinition, PrivilegeLevel,
 };

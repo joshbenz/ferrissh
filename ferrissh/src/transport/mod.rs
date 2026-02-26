@@ -8,3 +8,5 @@ mod ssh;
 
 pub use config::{AuthMethod, HostKeyVerification, SshConfig};
 pub use ssh::SshTransport;
+
+pub use crate::error::DisconnectReason;

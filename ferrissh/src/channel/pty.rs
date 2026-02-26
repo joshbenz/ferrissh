@@ -87,8 +87,11 @@ impl PtyChannel {
                             // stderr - also add to buffer
                             self.buffer.extend(&data);
                         }
-                        Some(ChannelMsg::Eof) | None => {
-                            return Err(ChannelError::Closed.into());
+                        Some(ChannelMsg::Eof) => {
+                            return Err(ChannelError::Eof.into());
+                        }
+                        None => {
+                            return Err(ChannelError::Disconnected.into());
                         }
                         _ => {}
                     }

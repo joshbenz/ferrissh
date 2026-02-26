@@ -93,9 +93,13 @@ pub enum ChannelError {
     #[error("Pattern not found within {0:?}")]
     PatternTimeout(std::time::Duration),
 
-    /// Channel closed unexpectedly
-    #[error("Channel closed")]
-    Closed,
+    /// Device closed the session (received EOF).
+    #[error("Channel EOF")]
+    Eof,
+
+    /// SSH transport died (channel stream ended).
+    #[error("Channel disconnected")]
+    Disconnected,
 
     /// SSH protocol error on the channel
     #[error("Channel SSH error: {0}")]
@@ -144,6 +148,20 @@ pub enum PlatformError {
     /// Invalid platform definition
     #[error("Invalid platform definition: {message}")]
     InvalidDefinition { message: String },
+}
+
+/// Reason a session was disconnected.
+///
+/// Sent via `watch::channel` from the SSH handler to the driver and
+/// service layer so they can react to connection loss without polling.
+#[derive(Debug, Clone)]
+pub enum DisconnectReason {
+    /// Graceful close via `Driver::close()`.
+    Closed,
+    /// Server sent a disconnect message.
+    ServerDisconnect { message: String },
+    /// Connection lost due to transport error (keepalive timeout, I/O error, etc.).
+    TransportError(String),
 }
 
 /// Result type alias using ferrissh's Error.

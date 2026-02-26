@@ -1,21 +1,24 @@
 //! Generic driver implementation that works with any platform.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use regex::Regex as TextRegex;
 use regex::bytes::Regex;
+use tokio::sync::watch;
 
 use super::Driver;
+use super::SessionState;
 use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
 use crate::channel::{PtyChannel, PtyConfig};
-use crate::error::{DriverError, Result};
+use crate::error::{ChannelError, DisconnectReason, DriverError, Error, Result, TransportError};
 use crate::platform::PlatformDefinition;
 use crate::transport::SshTransport;
 use crate::transport::config::SshConfig;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 
 /// Generic driver that works with any platform definition.
 ///
@@ -48,6 +51,21 @@ pub struct GenericDriver {
 
     /// Whether to normalize command output.
     normalize: bool,
+
+    /// Current session state.
+    state: SessionState,
+
+    /// Sender for disconnect notifications (shared with SshHandler).
+    disconnect_tx: Option<Arc<watch::Sender<Option<DisconnectReason>>>>,
+
+    /// Receiver for disconnect notifications.
+    disconnect_rx: Option<watch::Receiver<Option<DisconnectReason>>>,
+
+    /// When the current session was established.
+    connected_since: Option<Instant>,
+
+    /// When the last command completed successfully.
+    last_command_at: Option<Instant>,
 }
 
 impl GenericDriver {
@@ -70,6 +88,11 @@ impl GenericDriver {
             timeout,
             prompt_pattern,
             normalize,
+            state: SessionState::Disconnected,
+            disconnect_tx: None,
+            disconnect_rx: None,
+            connected_since: None,
+            last_command_at: None,
         }
     }
 
@@ -198,11 +221,103 @@ impl GenericDriver {
         }
         Ok(())
     }
+
+    /// Check that the session is in `Ready` state.
+    ///
+    /// Also performs a non-blocking check of the disconnect watch channel
+    /// to catch idle disconnects that happened since the last operation.
+    fn check_ready(&mut self) -> Result<()> {
+        if self.state != SessionState::Ready {
+            return Err(DriverError::NotConnected.into());
+        }
+
+        // Non-blocking check for async disconnect
+        if let Some(ref mut rx) = self.disconnect_rx {
+            match rx.has_changed() {
+                Ok(true) => {
+                    let reason = rx.borrow_and_update().clone();
+                    if let Some(reason) = reason {
+                        self.handle_disconnect(reason);
+                        return Err(DriverError::NotConnected.into());
+                    }
+                }
+                Err(_) => {
+                    // Sender dropped — connection is gone
+                    self.handle_disconnect(DisconnectReason::TransportError(
+                        "connection lost".into(),
+                    ));
+                    return Err(DriverError::NotConnected.into());
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Transition to `Dead` state on connection loss.
+    fn handle_disconnect(&mut self, reason: DisconnectReason) {
+        debug!("handle_disconnect: {:?}", reason);
+        self.state = SessionState::Dead;
+        self.channel.take();
+        self.transport.take();
+        if let Some(ref tx) = self.disconnect_tx {
+            tx.send_if_modified(|value| {
+                if value.is_none() {
+                    *value = Some(reason);
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+    }
+
+    /// Check if an error indicates a dead connection.
+    fn is_connection_error(e: &Error) -> bool {
+        matches!(
+            e,
+            Error::Channel(ChannelError::Eof)
+                | Error::Channel(ChannelError::Disconnected)
+                | Error::Transport(TransportError::Disconnected)
+                | Error::Transport(TransportError::Ssh(_))
+        )
+    }
+
+    /// Get the current session state.
+    pub fn session_state(&self) -> SessionState {
+        self.state
+    }
+
+    /// When the current session was established.
+    pub fn connected_since(&self) -> Option<Instant> {
+        self.connected_since
+    }
+
+    /// When the last command completed successfully.
+    pub fn last_command_at(&self) -> Option<Instant> {
+        self.last_command_at
+    }
+
+    /// Get a clonable disconnect receiver for use in `tokio::select!`.
+    ///
+    /// Returns `None` if the driver is not connected.
+    pub fn disconnect_receiver(&self) -> Option<watch::Receiver<Option<DisconnectReason>>> {
+        self.disconnect_rx.clone()
+    }
+}
+
+impl Drop for GenericDriver {
+    fn drop(&mut self) {
+        if self.state == SessionState::Ready {
+            warn!("GenericDriver dropped while still connected — call close() first");
+        }
+    }
 }
 
 impl Driver for GenericDriver {
     async fn open(&mut self) -> Result<()> {
-        if self.transport.is_some() {
+        if self.state != SessionState::Disconnected {
             return Err(DriverError::AlreadyConnected.into());
         }
 
@@ -214,12 +329,18 @@ impl Driver for GenericDriver {
         // Connect
         let transport = SshTransport::connect(self.ssh_config.clone()).await?;
 
+        // Clone disconnect handles from transport
+        self.disconnect_tx = Some(transport.disconnect_tx().clone());
+        self.disconnect_rx = Some(transport.disconnect_rx().clone());
+
         // Open a PTY channel
         let russh_channel = transport.open_channel().await?;
         let pty_channel = PtyChannel::new(russh_channel, PtyConfig::default());
 
         self.transport = Some(transport);
         self.channel = Some(pty_channel);
+        self.state = SessionState::Ready;
+        self.connected_since = Some(Instant::now());
 
         // Wait for initial prompt
         let (_, prompt) = self.read_until_prompt().await?;
@@ -244,38 +365,97 @@ impl Driver for GenericDriver {
     }
 
     async fn close(&mut self) -> Result<()> {
-        debug!("closing connection");
+        match self.state {
+            SessionState::Ready => {
+                debug!("closing connection");
 
-        // Execute on_close commands before disconnecting
-        if self.channel.is_some() {
-            for cmd in &self.platform.on_close_commands.clone() {
-                let _ = self.send_command(cmd).await;
+                // Execute on_close commands while still Ready
+                if self.channel.is_some() {
+                    for cmd in &self.platform.on_close_commands.clone() {
+                        let _ = self.send_command(cmd).await;
+                    }
+                }
+
+                self.state = SessionState::Closing;
+
+                // Signal graceful close
+                if let Some(ref tx) = self.disconnect_tx {
+                    tx.send_if_modified(|value| {
+                        if value.is_none() {
+                            *value = Some(DisconnectReason::Closed);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                }
+
+                self.channel.take();
+
+                if let Some(transport) = self.transport.take() {
+                    transport.close().await?;
+                }
+
+                self.disconnect_tx.take();
+                self.disconnect_rx.take();
+                self.state = SessionState::Disconnected;
+                self.connected_since = None;
+                self.last_command_at = None;
             }
-        }
-
-        // Drop the channel first
-        self.channel.take();
-
-        if let Some(transport) = self.transport.take() {
-            transport.close().await?;
+            SessionState::Dead => {
+                debug!("cleaning up dead connection");
+                self.channel.take();
+                self.transport.take();
+                self.disconnect_tx.take();
+                self.disconnect_rx.take();
+                self.state = SessionState::Disconnected;
+                self.connected_since = None;
+                self.last_command_at = None;
+            }
+            SessionState::Disconnected | SessionState::Closing => {}
         }
         Ok(())
     }
 
     async fn send_command(&mut self, command: &str) -> Result<Response> {
-        debug!("send_command: {:?}", command);
+        self.check_ready()?;
 
-        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+        debug!("send_command: {:?}", command);
 
         let start = Instant::now();
 
         // Send the command
-        channel.send(command).await?;
+        let send_result = self
+            .channel
+            .as_mut()
+            .ok_or(DriverError::NotConnected)?
+            .send(command)
+            .await;
+
+        if let Err(e) = send_result {
+            if Self::is_connection_error(&e) {
+                self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+            }
+            return Err(e);
+        }
 
         // Wait for prompt
-        let data = channel
+        let read_result = self
+            .channel
+            .as_mut()
+            .ok_or(DriverError::NotConnected)?
             .read_until_pattern(&self.prompt_pattern, self.timeout)
-            .await?;
+            .await;
+
+        let data = match read_result {
+            Ok(data) => data,
+            Err(e) => {
+                if Self::is_connection_error(&e) {
+                    self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                }
+                return Err(e);
+            }
+        };
 
         let elapsed = start.elapsed();
         let raw_result = String::from_utf8_lossy(&data).to_string();
@@ -330,11 +510,15 @@ impl Driver for GenericDriver {
             }
         }
 
+        self.last_command_at = Some(Instant::now());
+
         debug!("send_command: completed in {:?}, success=true", elapsed);
         Ok(Response::new(command, result, raw_result, prompt, elapsed))
     }
 
     async fn acquire_privilege(&mut self, target: &str) -> Result<()> {
+        self.check_ready()?;
+
         let current = self
             .privilege_manager
             .current()
@@ -369,27 +553,68 @@ impl Driver for GenericDriver {
             );
 
             // Send the transition command
-            let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+            let send_result = self
+                .channel
+                .as_mut()
+                .ok_or(DriverError::NotConnected)?
+                .send(&transition.command)
+                .await;
 
-            channel.send(&transition.command).await?;
+            if let Err(e) = send_result {
+                if Self::is_connection_error(&e) {
+                    self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                }
+                return Err(e);
+            }
 
             // Handle authentication if needed
             if let Some(ref auth_pattern) = transition.auth_prompt {
                 // Wait for auth prompt
-                let _ = channel
+                let auth_result = self
+                    .channel
+                    .as_mut()
+                    .ok_or(DriverError::NotConnected)?
                     .read_until_pattern(auth_pattern, self.timeout)
-                    .await?;
+                    .await;
+
+                if let Err(e) = auth_result {
+                    if Self::is_connection_error(&e) {
+                        self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                    }
+                    return Err(e);
+                }
 
                 // Send password (from auth method)
                 if let crate::transport::config::AuthMethod::Password(ref pwd) =
                     self.ssh_config.auth
                 {
-                    channel.send(pwd).await?;
+                    let pwd_result = self
+                        .channel
+                        .as_mut()
+                        .ok_or(DriverError::NotConnected)?
+                        .send(pwd)
+                        .await;
+
+                    if let Err(e) = pwd_result {
+                        if Self::is_connection_error(&e) {
+                            self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                        }
+                        return Err(e);
+                    }
                 }
             }
 
             // Wait for new prompt
-            let (_, prompt) = self.read_until_prompt().await?;
+            let prompt_result = self.read_until_prompt().await;
+            let (_, prompt) = match prompt_result {
+                Ok(r) => r,
+                Err(e) => {
+                    if Self::is_connection_error(&e) {
+                        self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                    }
+                    return Err(e);
+                }
+            };
 
             // Verify we reached the expected privilege
             if let Ok(level) = self.privilege_manager.determine_from_prompt(&prompt) {
@@ -407,6 +632,8 @@ impl Driver for GenericDriver {
     }
 
     async fn send_interactive(&mut self, events: &[InteractiveEvent]) -> Result<InteractiveResult> {
+        self.check_ready()?;
+
         let total_start = Instant::now();
         let mut steps = Vec::with_capacity(events.len());
 
@@ -421,18 +648,41 @@ impl Driver for GenericDriver {
             };
             debug!("send_interactive: sending '{}'", log_input);
 
-            // Borrow channel for I/O, then release before normalize_output
-            let (data, step_elapsed) = {
-                let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+            // Send input
+            let send_result = self
+                .channel
+                .as_mut()
+                .ok_or(DriverError::NotConnected)?
+                .send(&event.input)
+                .await;
 
-                channel.send(&event.input).await?;
+            if let Err(e) = send_result {
+                if Self::is_connection_error(&e) {
+                    self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                }
+                return Err(e);
+            }
 
-                let timeout = event.timeout.unwrap_or(self.timeout);
-                let data = channel.read_until_pattern(&event.pattern, timeout).await?;
+            // Read until expected pattern
+            let timeout = event.timeout.unwrap_or(self.timeout);
+            let read_result = self
+                .channel
+                .as_mut()
+                .ok_or(DriverError::NotConnected)?
+                .read_until_pattern(&event.pattern, timeout)
+                .await;
 
-                (data, step_start.elapsed())
+            let data = match read_result {
+                Ok(d) => d,
+                Err(e) => {
+                    if Self::is_connection_error(&e) {
+                        self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+                    }
+                    return Err(e);
+                }
             };
 
+            let step_elapsed = step_start.elapsed();
             let raw_output = String::from_utf8_lossy(&data).to_string();
 
             // Normalize output (strip echo + prompt, then vendor post-processing)
@@ -524,15 +774,19 @@ impl Driver for GenericDriver {
     }
 
     fn is_open(&self) -> bool {
-        self.transport.is_some() && self.channel.is_some()
+        self.state == SessionState::Ready
     }
 
     fn is_alive(&self) -> bool {
-        self.transport.as_ref().is_some_and(|t| t.is_alive())
+        self.state == SessionState::Ready && self.transport.as_ref().is_some_and(|t| t.is_alive())
     }
 
     fn current_privilege(&self) -> Option<&str> {
         self.privilege_manager.current().map(|l| l.name.as_str())
+    }
+
+    fn state(&self) -> SessionState {
+        self.state
     }
 }
 
