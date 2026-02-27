@@ -39,6 +39,7 @@ impl Payload {
     }
 
     /// Create an empty payload.
+    #[allow(dead_code)]
     pub(crate) fn empty() -> Self {
         Self {
             bytes: Bytes::new(),
