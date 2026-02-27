@@ -8,9 +8,11 @@
 //! ## Features
 //!
 //! - Async SSH connections via russh
-//! - Multi-vendor support (Linux, Juniper, with extensible platform system)
+//! - Multi-vendor support (Linux, Juniper, Arista, Nokia, Arrcus)
 //! - Efficient pattern buffer matching (scrapli-style tail search)
 //! - Privilege level management with graph-based navigation
+//! - Zero-copy [`Payload`] responses backed by reference-counted `Bytes` (O(1) clone)
+//! - In-place buffer normalization with SIMD-accelerated byte search
 //! - Easy vendor extensibility
 //!
 //! ## Quick Start
@@ -45,8 +47,8 @@ pub mod transport;
 // Re-export main types for convenience
 pub use driver::{
     ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder, GenericConfigSession,
-    GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult, NamedSession, Response,
-    SessionState, Validatable, ValidationResult,
+    GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult, NamedSession, Payload,
+    Response, SessionState, Validatable, ValidationResult,
 };
 pub use error::{DisconnectReason, Error};
 pub use platform::{

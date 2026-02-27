@@ -18,6 +18,8 @@ ssh-key = "0.6"
 
 tokio = { version = "1", features = ["full"] }
 
+bytes = "1"
+memchr = "2"
 regex = "1"
 strip-ansi-escapes = "0.2"
 

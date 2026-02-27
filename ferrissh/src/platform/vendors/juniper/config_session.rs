@@ -169,7 +169,7 @@ impl Diffable for JuniperConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("Juniper config session: diff");
         let response = self.driver.send_command("show | compare").await?;
-        Ok(response.result)
+        Ok(response.result.to_string())
     }
 }
 

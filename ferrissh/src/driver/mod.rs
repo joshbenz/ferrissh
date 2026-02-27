@@ -7,6 +7,7 @@ mod builder;
 pub mod config_session;
 mod generic;
 mod interactive;
+pub mod payload;
 mod privilege;
 pub(crate) mod response;
 
@@ -18,6 +19,7 @@ pub use config_session::{
 pub use generic::GenericDriver;
 // SessionState is defined in this module and re-exported here
 pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, InteractiveStep};
+pub use payload::Payload;
 pub use privilege::PrivilegeManager;
 pub use response::Response;
 

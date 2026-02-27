@@ -213,7 +213,7 @@ impl Diffable for AristaConfigSession<'_> {
             .driver
             .send_command("show session-config diffs")
             .await?;
-        Ok(response.result)
+        Ok(response.result.to_string())
     }
 }
 

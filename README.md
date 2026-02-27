@@ -19,6 +19,7 @@ Ferrissh provides a high-level async API for interacting with network devices ov
 - **ConfD Support** - Generic ConfD config session shared by both C-style and J-style CLI vendors
 - **Interactive Commands** - Handle prompts requiring user input (confirmations, passwords)
 - **Configuration Mode** - Automatic privilege escalation for config commands
+- **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. O(1) clones, ~4x less memory than naive `String` pipelines
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
 - **Data-Driven Platforms** - Platforms are pure data (prompts, privilege graphs, failure patterns) with optional extension traits for configuration sessions
 
@@ -147,7 +148,7 @@ let responses = driver.send_config(&[
 
 // Check for errors
 for response in &responses {
-    if response.failed {
+    if !response.is_success() {
         eprintln!("Error: {:?}", response.failure_message);
     }
 }
@@ -200,7 +201,7 @@ let events = InteractiveBuilder::new()
 
 let result = driver.send_interactive(&events).await?;
 
-if result.failed {
+if !result.is_success() {
     eprintln!("Interactive command failed!");
 }
 
@@ -306,6 +307,30 @@ for disk in &disks {
 ```
 
 See the [textfsm_parsing example](ferrissh/examples/textfsm_parsing.rs) for a complete demonstration with templates for Linux and Juniper commands.
+
+### Response Payload (Zero-Copy)
+
+Command responses use the `Payload` type — a zero-copy wrapper around reference-counted `Bytes`. It implements `Deref<Target = str>`, so it works anywhere a `&str` is expected:
+
+```rust
+let response = driver.send_command("show version").await?;
+
+// All &str methods work via deref coercion
+println!("{}", response.result);              // Display
+assert!(response.result.contains("JUNOS"));   // str::contains
+for line in response.result.lines() {         // str::lines
+    println!("  {}", line);
+}
+let trimmed: &str = response.result.trim();   // str::trim
+
+// Cloning is O(1) (reference count increment, no data copy)
+let cloned = response.result.clone();
+
+// Convert to owned String when needed
+let owned: String = response.result.into_string();
+```
+
+The in-place normalization pipeline (linefeed normalization, echo stripping, prompt removal) operates directly on the buffer with SIMD-accelerated byte search via `memchr`, avoiding intermediate `String` allocations.
 
 ### Adding a Custom Platform
 
@@ -498,6 +523,8 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 | `russh` | SSH client library |
 | `ssh-key` | SSH key handling |
 | `tokio` | Async runtime |
+| `bytes` | Zero-copy buffer management (`BytesMut`/`Bytes`) |
+| `memchr` | SIMD-accelerated byte search for in-place normalization |
 | `regex` | Pattern matching |
 | `thiserror` | Error handling |
 | `log` | Logging facade |

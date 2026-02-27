@@ -199,7 +199,7 @@ impl Diffable for NokiaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("Nokia config session: diff");
         let response = self.driver.send_command("compare").await?;
-        Ok(response.result)
+        Ok(response.result.to_string())
     }
 }
 

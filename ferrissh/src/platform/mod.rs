@@ -66,11 +66,11 @@ impl From<Platform> for PlatformDefinition {
 /// This trait is only needed for vendors with genuinely unique output formats,
 /// like Juniper's `[edit]` context lines. Most platforms don't need it.
 pub trait VendorBehavior: Send + Sync {
-    /// Post-process output after universal stripping has been applied.
+    /// Post-process output in place after universal stripping has been applied.
     ///
-    /// The input has already had the command echo and trailing prompt removed.
+    /// The buffer has already had the command echo and trailing prompt removed.
     /// Use this for vendor-specific cleanup (e.g., filtering `[edit]` lines).
-    fn post_process_output(&self, output: &str) -> String {
-        output.to_string()
-    }
+    ///
+    /// The default implementation is a no-op.
+    fn post_process_output(&self, _buf: &mut bytes::BytesMut) {}
 }
