@@ -19,6 +19,7 @@ Ferrissh provides a high-level async API for interacting with network devices ov
 - **ConfD Support** - Generic ConfD config session shared by both C-style and J-style CLI vendors
 - **Interactive Commands** - Handle prompts requiring user input (confirmations, passwords)
 - **Configuration Mode** - Automatic privilege escalation for config commands
+- **Credential Protection** - Passwords and passphrases wrapped in `SecretString` (via `secrecy`), redacted from Debug output
 - **Multi-Channel** - Multiple independent PTY shells on a single SSH connection via `Session` + `Channel`
 - **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. Cheap clones.
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
@@ -30,7 +31,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferrissh = "0.2"
+ferrissh = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -541,6 +542,12 @@ RUST_LOG=debug cargo run --example basic_ls -- --host localhost --user admin --k
 
 Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
+## Security
+
+- **Credential protection** - Passwords and key passphrases are stored as `SecretString` (from the `secrecy` crate), which zeroizes memory on drop. `Debug` formatting on `AuthMethod` and `SshConfig` redacts all secrets.
+- **Input validation** - Arista config session names are validated against injection (alphanumeric, hyphens, underscores only, max 63 chars). Builder inputs (host, port) are validated before connection.
+- **RAII safety** - Config session guards only mark themselves as consumed after all operations succeed, ensuring `Drop` warnings fire on partial failures.
+
 ## Planned Features
 
 ### Platform Support
@@ -590,6 +597,7 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 | `regex` | Pattern matching |
 | `thiserror` | Error handling |
 | `log` | Logging facade |
+| `secrecy` | Credential protection (`SecretString` with zeroize) |
 | `serde` | Serialization/deserialization |
 | `indexmap` | Deterministic-order maps |
 | `strip-ansi-escapes` | ANSI escape code removal |
