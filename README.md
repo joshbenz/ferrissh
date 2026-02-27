@@ -19,6 +19,7 @@ Ferrissh provides a high-level async API for interacting with network devices ov
 - **ConfD Support** - Generic ConfD config session shared by both C-style and J-style CLI vendors
 - **Interactive Commands** - Handle prompts requiring user input (confirmations, passwords)
 - **Configuration Mode** - Automatic privilege escalation for config commands
+- **Multi-Channel** - Multiple independent PTY shells on a single SSH connection via `Session` + `Channel`
 - **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. Cheap clones.
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
 - **Data-Driven Platforms** - Platforms are pure data (prompts, privilege graphs, failure patterns) with optional extension traits for configuration sessions
@@ -70,7 +71,7 @@ async fn main() -> Result<(), ferrissh::Error> {
 
 ### Config Session Management
 
-Config sessions are **RAII-guarded transactions** that hold `&mut Driver`, preventing concurrent use at compile time. The `commit()` and `abort()` methods consume the session by value, enforcing single-use.
+Config sessions are **RAII-guarded transactions** that hold `&mut Channel`, preventing concurrent use at compile time. The `commit()` and `abort()` methods consume the session by value, enforcing single-use.
 
 Ferrissh uses **extension traits** to express what each vendor's config session supports:
 
@@ -166,7 +167,7 @@ use ferrissh::platform::vendors::juniper::JuniperConfigSession;
 let mut driver = connect_juniper().await;
 
 // Create a config session (enters config mode)
-let mut session = JuniperConfigSession::new(&mut driver).await?;
+let mut session = JuniperConfigSession::new(driver.channel().unwrap()).await?;
 
 // Make changes
 session.send_command("set interfaces lo0 description 'test'").await?;
@@ -182,6 +183,58 @@ if result.valid {
 } else {
     session.abort().await?;   // Discards changes and exits config mode
 }
+```
+
+### Multi-Channel (Multiple Shells on One Connection)
+
+Open multiple independent PTY shells on a single authenticated SSH connection:
+
+```rust
+use ferrissh::{Driver, DriverBuilder, Platform};
+
+let mut driver = DriverBuilder::new("192.168.1.1")
+    .username("admin")
+    .password("secret")
+    .platform(Platform::Linux)
+    .build()?;
+
+driver.open().await?;
+
+// Open a second channel on the same SSH connection
+let mut ch2 = driver.open_channel().await?;
+
+// Each channel has its own shell, privilege state, and prompt detection
+let (r1, r2) = tokio::try_join!(
+    driver.send_command("hostname"),
+    ch2.send_command("whoami"),
+)?;
+
+ch2.close().await?;
+driver.close().await?;
+```
+
+For full control, use `SessionBuilder` to create a session and open channels directly:
+
+```rust
+use ferrissh::{SessionBuilder, Platform};
+
+let session = SessionBuilder::new("192.168.1.1")
+    .username("admin")
+    .password("secret")
+    .platform(Platform::Linux)
+    .connect().await?;
+
+let mut ch1 = session.open_channel().await?;
+let mut ch2 = session.open_channel().await?;
+
+let (r1, r2) = tokio::try_join!(
+    ch1.send_command("uname -a"),
+    ch2.send_command("uptime"),
+)?;
+
+ch1.close().await?;
+ch2.close().await?;
+session.close().await?;
 ```
 
 ### Interactive Commands
@@ -430,6 +483,14 @@ cargo run --example config_session -- --host router1 --user admin --password sec
 cargo run --example config_session -- --host pe1 --user admin --password admin --platform nokia
 ```
 
+### multi_channel - Multiple Shells on One Connection
+
+Demonstrates opening multiple PTY channels on a single SSH connection, both from a driver and from a session directly.
+
+```bash
+SSH_HOST=myserver SSH_USER=admin SSH_PASS=secret cargo run --example multi_channel
+```
+
 ### interactive - Interactive Commands
 
 Shows how to handle commands that require user input or confirmation prompts.
@@ -501,6 +562,7 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
 - [x] SSH keepalive configuration
 - [x] Connection health checks (`is_alive()`)
+- [x] Multi-channel support (multiple PTY shells per connection)
 
 ### Macros & Compile-Time Safety
 
