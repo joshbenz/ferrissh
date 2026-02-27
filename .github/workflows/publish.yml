@@ -67,21 +67,8 @@ jobs:
           fi
           echo "Version verified: $CARGO_VERSION"
 
-      - name: Check if ferrissh-macros needs publishing
-        id: check_macros
-        run: |
-          LOCAL_VERSION=$(grep '^version' ferrissh-macros/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          PUBLISHED=$(cargo search ferrissh-macros --limit 1 2>/dev/null | grep -oP 'ferrissh-macros = "\K[^"]+' || echo "")
-          if [ "$LOCAL_VERSION" = "$PUBLISHED" ]; then
-            echo "ferrissh-macros v$LOCAL_VERSION already published, skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ferrissh-macros v$LOCAL_VERSION not yet published (crates.io has v$PUBLISHED)"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish ferrissh-macros (dry run)
-        if: inputs.dry_run == true && steps.check_macros.outputs.skip != 'true'
+        if: inputs.dry_run == true
         working-directory: ./ferrissh-macros
         run: cargo publish --dry-run
 
@@ -91,14 +78,14 @@ jobs:
         run: cargo publish --dry-run
 
       - name: Publish ferrissh-macros
-        if: inputs.dry_run != true && steps.check_macros.outputs.skip != 'true'
+        if: inputs.dry_run != true
         working-directory: ./ferrissh-macros
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: cargo publish || echo "ferrissh-macros already published, skipping"
 
       - name: Wait for crates.io index update
-        if: inputs.dry_run != true && steps.check_macros.outputs.skip != 'true'
+        if: inputs.dry_run != true
         run: sleep 30
 
       - name: Publish ferrissh
