@@ -30,9 +30,8 @@ async fn main() -> Result<(), ferrissh::Error> {
     // Open a second channel on the same SSH connection
     let mut ch2 = driver.open_channel().await?;
 
-    // Send different commands on each channel concurrently
-    let r1 = driver.send_command("hostname").await?;
-    let r2 = ch2.send_command("whoami").await?;
+    // Send commands on both channels concurrently
+    let (r1, r2) = tokio::try_join!(driver.send_command("hostname"), ch2.send_command("whoami"),)?;
 
     println!("Channel 1 (hostname): {}", r1.result);
     println!("Channel 2 (whoami):   {}", r2.result);
@@ -55,8 +54,8 @@ async fn main() -> Result<(), ferrissh::Error> {
     let mut ch1 = session.open_channel().await?;
     let mut ch2 = session.open_channel().await?;
 
-    let r1 = ch1.send_command("uname -a").await?;
-    let r2 = ch2.send_command("uptime").await?;
+    // Send commands on both channels concurrently
+    let (r1, r2) = tokio::try_join!(ch1.send_command("uname -a"), ch2.send_command("uptime"),)?;
 
     println!("Channel 1 (uname):  {}", r1.result);
     println!("Channel 2 (uptime): {}", r2.result);
