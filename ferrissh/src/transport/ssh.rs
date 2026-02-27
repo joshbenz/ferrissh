@@ -7,9 +7,10 @@ use log::{debug, warn};
 use russh::Channel;
 use russh::client::{self, Handle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
+use tokio::sync::watch;
 
 use super::config::{AuthMethod, HostKeyVerification, SshConfig};
-use crate::error::{Result, TransportError};
+use crate::error::{DisconnectReason, Result, TransportError};
 
 /// SSH transport wrapping russh client.
 pub struct SshTransport {
@@ -18,6 +19,12 @@ pub struct SshTransport {
 
     /// Configuration used for this connection.
     config: SshConfig,
+
+    /// Sender for disconnect notifications (shared with SshHandler).
+    disconnect_tx: Arc<watch::Sender<Option<DisconnectReason>>>,
+
+    /// Receiver for disconnect notifications.
+    disconnect_rx: watch::Receiver<Option<DisconnectReason>>,
 }
 
 impl SshTransport {
@@ -34,12 +41,16 @@ impl SshTransport {
 
         let host_key_error: Arc<Mutex<Option<TransportError>>> = Arc::new(Mutex::new(None));
 
+        let (disconnect_tx, disconnect_rx) = watch::channel(None);
+        let disconnect_tx = Arc::new(disconnect_tx);
+
         let handler = SshHandler {
             host: config.host.clone(),
             port: config.port,
             host_key_verification: config.host_key_verification.clone(),
             known_hosts_path: config.known_hosts_path.clone(),
             host_key_error: host_key_error.clone(),
+            disconnect_tx: disconnect_tx.clone(),
         };
 
         // Connect to the server
@@ -64,7 +75,12 @@ impl SshTransport {
         // Authenticate
         Self::authenticate(&mut session, &config).await?;
 
-        Ok(Self { session, config })
+        Ok(Self {
+            session,
+            config,
+            disconnect_tx,
+            disconnect_rx,
+        })
     }
 
     /// Open a new PTY channel on this connection.
@@ -217,12 +233,33 @@ impl SshTransport {
         !self.session.is_closed()
     }
 
+    /// Get a reference to the disconnect sender.
+    pub fn disconnect_tx(&self) -> &Arc<watch::Sender<Option<DisconnectReason>>> {
+        &self.disconnect_tx
+    }
+
+    /// Get a reference to the disconnect receiver.
+    pub fn disconnect_rx(&self) -> &watch::Receiver<Option<DisconnectReason>> {
+        &self.disconnect_rx
+    }
+
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
         debug!(
             "closing connection to {}:{}",
             self.config.host, self.config.port
         );
+
+        // Signal graceful close (no-op if already signalled)
+        self.disconnect_tx.send_if_modified(|value| {
+            if value.is_none() {
+                *value = Some(DisconnectReason::Closed);
+                true
+            } else {
+                false
+            }
+        });
+
         self.session
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await
@@ -240,6 +277,8 @@ struct SshHandler {
     /// Stores a detailed host-key error so connect() can surface it
     /// instead of the generic russh::Error::UnknownKey.
     host_key_error: Arc<Mutex<Option<TransportError>>>,
+    /// Sender for disconnect notifications.
+    disconnect_tx: Arc<watch::Sender<Option<DisconnectReason>>>,
 }
 
 impl SshHandler {
@@ -277,10 +316,59 @@ impl SshHandler {
     }
 }
 
-// TODO: Impl drop and warn if user is dropping without calling close
+impl Drop for SshHandler {
+    fn drop(&mut self) {
+        // Safety net: if disconnected() was never called, signal transport loss.
+        self.disconnect_tx.send_if_modified(|value| {
+            if value.is_none() {
+                *value = Some(DisconnectReason::TransportError("connection lost".into()));
+                true
+            } else {
+                false
+            }
+        });
+    }
+}
 
 impl client::Handler for SshHandler {
     type Error = russh::Error;
+
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> std::result::Result<(), Self::Error> {
+        match reason {
+            client::DisconnectReason::ReceivedDisconnect(info) => {
+                debug!(
+                    "server disconnect: code={:?}, message={:?}",
+                    info.reason_code, info.message
+                );
+                self.disconnect_tx.send_if_modified(|value| {
+                    if value.is_none() {
+                        *value = Some(DisconnectReason::ServerDisconnect {
+                            message: info.message,
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                });
+            }
+            client::DisconnectReason::Error(ref e) => {
+                debug!("transport error disconnect: {}", e);
+                let msg = e.to_string();
+                self.disconnect_tx.send_if_modified(|value| {
+                    if value.is_none() {
+                        *value = Some(DisconnectReason::TransportError(msg));
+                        true
+                    } else {
+                        false
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,

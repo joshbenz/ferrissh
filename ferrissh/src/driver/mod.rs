@@ -7,6 +7,7 @@ mod builder;
 pub mod config_session;
 mod generic;
 mod interactive;
+pub mod payload;
 mod privilege;
 pub(crate) mod response;
 
@@ -16,13 +17,35 @@ pub use config_session::{
     ValidationResult,
 };
 pub use generic::GenericDriver;
+// SessionState is defined in this module and re-exported here
 pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, InteractiveStep};
+pub use payload::Payload;
 pub use privilege::PrivilegeManager;
 pub use response::Response;
 
 use std::future::Future;
 
 use crate::error::Result;
+
+/// The state of a driver's SSH session.
+///
+/// ```text
+/// Disconnected ──open()──> Ready
+/// Ready ──close()──> Closing ──cleanup──> Disconnected
+/// Ready ──connection error──> Dead ──close()──> Disconnected
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionState {
+    /// Not connected.
+    Disconnected,
+    /// Connected and ready for commands.
+    Ready,
+    /// Graceful close in progress.
+    Closing,
+    /// Connection died (transport error or server disconnect).
+    /// Call `close()` to transition back to `Disconnected`.
+    Dead,
+}
 
 /// Trait for device drivers.
 pub trait Driver: Send + Sync {
@@ -134,4 +157,7 @@ pub trait Driver: Send + Sync {
 
     /// Get the current privilege level name.
     fn current_privilege(&self) -> Option<&str>;
+
+    /// Get the current session state.
+    fn state(&self) -> SessionState;
 }

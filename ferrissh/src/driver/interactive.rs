@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use regex::bytes::Regex;
 
+use super::payload::Payload;
+
 /// An event in an interactive command sequence.
 ///
 /// Each event consists of:
@@ -109,7 +111,7 @@ impl InteractiveResult {
 
     /// Get the final output (from the last step).
     pub fn final_output(&self) -> Option<&str> {
-        self.steps.last().map(|s| s.output.as_str())
+        self.steps.last().map(|s| &*s.output)
     }
 
     /// Get all outputs concatenated.
@@ -125,10 +127,7 @@ pub struct InteractiveStep {
     pub input: String,
 
     /// The output received after sending input.
-    pub output: String,
-
-    /// The raw output before normalization.
-    pub raw_output: String,
+    pub output: Payload,
 
     /// Time taken for this step.
     pub elapsed: Duration,
@@ -139,16 +138,10 @@ pub struct InteractiveStep {
 
 impl InteractiveStep {
     /// Create a successful step.
-    pub fn success(
-        input: impl Into<String>,
-        output: impl Into<String>,
-        raw_output: impl Into<String>,
-        elapsed: Duration,
-    ) -> Self {
+    pub fn success(input: impl Into<String>, output: Payload, elapsed: Duration) -> Self {
         Self {
             input: input.into(),
-            output: output.into(),
-            raw_output: raw_output.into(),
+            output,
             elapsed,
             failure_message: None,
         }
@@ -157,15 +150,13 @@ impl InteractiveStep {
     /// Create a failed step.
     pub fn failed(
         input: impl Into<String>,
-        output: impl Into<String>,
-        raw_output: impl Into<String>,
+        output: Payload,
         elapsed: Duration,
         message: impl Into<String>,
     ) -> Self {
         Self {
             input: input.into(),
-            output: output.into(),
-            raw_output: raw_output.into(),
+            output,
             elapsed,
             failure_message: Some(message.into()),
         }
@@ -275,6 +266,15 @@ impl InteractiveBuilderWithInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::BytesMut;
+
+    fn make_payload(s: &str) -> Payload {
+        Payload::from_bytes_mut(BytesMut::from(s))
+    }
+
+    // =========================================================================
+    // InteractiveEvent
+    // =========================================================================
 
     #[test]
     fn test_interactive_event_new() {
@@ -296,6 +296,26 @@ mod tests {
         let result = InteractiveEvent::new("cmd", r"[invalid");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_interactive_event_with_timeout() {
+        let event = InteractiveEvent::new("cmd", r"#")
+            .unwrap()
+            .with_timeout(Duration::from_secs(30));
+        assert_eq!(event.timeout, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn test_interactive_event_with_hidden() {
+        let event = InteractiveEvent::new("cmd", r"#")
+            .unwrap()
+            .with_hidden(true);
+        assert!(event.hidden);
+    }
+
+    // =========================================================================
+    // InteractiveBuilder
+    // =========================================================================
 
     #[test]
     fn test_interactive_builder() {
@@ -330,15 +350,146 @@ mod tests {
     }
 
     #[test]
-    fn test_interactive_result() {
+    fn test_interactive_builder_with_default_timeout() {
+        let events = InteractiveBuilder::new()
+            .with_timeout(Duration::from_secs(60))
+            .send("cmd")
+            .expect(r"#")
+            .unwrap()
+            .build();
+
+        assert_eq!(events[0].timeout, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn test_interactive_builder_per_event_timeout() {
+        let events = InteractiveBuilder::new()
+            .send("cmd")
+            .with_timeout(Duration::from_secs(120))
+            .expect(r"#")
+            .unwrap()
+            .build();
+
+        assert_eq!(events[0].timeout, Some(Duration::from_secs(120)));
+    }
+
+    // =========================================================================
+    // InteractiveStep with Payload
+    // =========================================================================
+
+    #[test]
+    fn test_interactive_step_success() {
+        let step = InteractiveStep::success(
+            "cmd",
+            make_payload("output text"),
+            Duration::from_millis(50),
+        );
+        assert!(step.is_success());
+        assert_eq!(&*step.output, "output text");
+        assert!(step.failure_message.is_none());
+    }
+
+    #[test]
+    fn test_interactive_step_failed() {
+        let step = InteractiveStep::failed(
+            "bad cmd",
+            make_payload("error: invalid"),
+            Duration::from_millis(50),
+            "error: invalid",
+        );
+        assert!(!step.is_success());
+        assert_eq!(&*step.output, "error: invalid");
+        assert_eq!(step.failure_message.as_deref(), Some("error: invalid"));
+    }
+
+    #[test]
+    fn test_interactive_step_output_deref() {
+        let step = InteractiveStep::success(
+            "cmd",
+            make_payload("line1\nline2\nline3"),
+            Duration::from_millis(50),
+        );
+        // Deref<str> methods work on step.output
+        assert!(step.output.contains("line2"));
+        assert_eq!(step.output.lines().count(), 3);
+        assert!(step.output.starts_with("line1"));
+    }
+
+    #[test]
+    fn test_interactive_step_output_clone() {
+        let step = InteractiveStep::success(
+            "cmd",
+            make_payload("shared output"),
+            Duration::from_millis(50),
+        );
+        let cloned = step.clone();
+        // Payload clone is ref-counted, same underlying pointer
+        assert_eq!(
+            step.output.as_bytes().as_ptr(),
+            cloned.output.as_bytes().as_ptr()
+        );
+    }
+
+    // =========================================================================
+    // InteractiveResult with Payload
+    // =========================================================================
+
+    #[test]
+    fn test_interactive_result_success() {
         let steps = vec![
-            InteractiveStep::success("cmd1", "output1", "raw1", Duration::from_millis(100)),
-            InteractiveStep::success("cmd2", "output2", "raw2", Duration::from_millis(200)),
+            InteractiveStep::success("cmd1", make_payload("output1"), Duration::from_millis(100)),
+            InteractiveStep::success("cmd2", make_payload("output2"), Duration::from_millis(200)),
         ];
         let result = InteractiveResult::new(steps, Duration::from_millis(300));
 
         assert!(result.is_success());
         assert_eq!(result.final_output(), Some("output2"));
         assert_eq!(result.full_output(), "output1output2");
+    }
+
+    #[test]
+    fn test_interactive_result_with_failure() {
+        let steps = vec![
+            InteractiveStep::success("cmd1", make_payload("ok"), Duration::from_millis(100)),
+            InteractiveStep::failed(
+                "cmd2",
+                make_payload("error"),
+                Duration::from_millis(200),
+                "command failed",
+            ),
+        ];
+        let result = InteractiveResult::new(steps, Duration::from_millis(300));
+
+        assert!(!result.is_success());
+    }
+
+    #[test]
+    fn test_interactive_result_empty() {
+        let result = InteractiveResult::new(vec![], Duration::from_millis(0));
+        assert!(result.is_success()); // no steps means no failures
+        assert_eq!(result.final_output(), None);
+        assert_eq!(result.full_output(), "");
+    }
+
+    #[test]
+    fn test_interactive_result_final_output_deref() {
+        let steps = vec![InteractiveStep::success(
+            "cmd",
+            make_payload("final output"),
+            Duration::from_millis(100),
+        )];
+        let result = InteractiveResult::new(steps, Duration::from_millis(100));
+        // final_output() returns Option<&str> via Deref coercion
+        assert_eq!(result.final_output(), Some("final output"));
+    }
+
+    #[test]
+    fn test_interactive_result_full_output_concat() {
+        let steps = vec![
+            InteractiveStep::success("a", make_payload("hello "), Duration::from_millis(50)),
+            InteractiveStep::success("b", make_payload("world"), Duration::from_millis(50)),
+        ];
+        let result = InteractiveResult::new(steps, Duration::from_millis(100));
+        assert_eq!(result.full_output(), "hello world");
     }
 }

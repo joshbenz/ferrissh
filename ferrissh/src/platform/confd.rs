@@ -181,7 +181,7 @@ impl Diffable for ConfDConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("{} config session: diff", self.platform_name);
         let response = self.driver.send_command("compare running-config").await?;
-        Ok(response.result)
+        Ok(response.result.to_string())
     }
 }
 

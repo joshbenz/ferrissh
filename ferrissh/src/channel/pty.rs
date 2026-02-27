@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use bytes::BytesMut;
 use regex::bytes::Regex;
 use russh::Channel;
 use russh::ChannelMsg;
@@ -66,7 +67,7 @@ impl PtyChannel {
         &mut self,
         pattern: &Regex,
         timeout: Duration,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<BytesMut> {
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
@@ -87,8 +88,11 @@ impl PtyChannel {
                             // stderr - also add to buffer
                             self.buffer.extend(&data);
                         }
-                        Some(ChannelMsg::Eof) | None => {
-                            return Err(ChannelError::Closed.into());
+                        Some(ChannelMsg::Eof) => {
+                            return Err(ChannelError::Eof.into());
+                        }
+                        None => {
+                            return Err(ChannelError::Disconnected.into());
                         }
                         _ => {}
                     }
@@ -108,7 +112,7 @@ impl PtyChannel {
     }
 
     /// Take the buffer contents.
-    pub fn take_buffer(&mut self) -> Vec<u8> {
+    pub fn take_buffer(&mut self) -> BytesMut {
         self.buffer.take()
     }
 

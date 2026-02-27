@@ -5,6 +5,7 @@
 //!
 //! For large outputs (e.g., full BGP tables), this is critical for performance.
 
+use bytes::BytesMut;
 use regex::bytes::Regex;
 
 /// Buffer for accumulating output and efficiently searching for patterns.
@@ -14,7 +15,7 @@ use regex::bytes::Regex;
 #[derive(Debug)]
 pub struct PatternBuffer {
     /// The accumulated output buffer.
-    buffer: Vec<u8>,
+    buffer: BytesMut,
 
     /// How many bytes from the end to search for patterns.
     /// Default is 1000 bytes.
@@ -30,7 +31,7 @@ impl PatternBuffer {
     ///   Default recommendation is 1000 bytes.
     pub fn new(search_depth: usize) -> Self {
         Self {
-            buffer: Vec::with_capacity(4096),
+            buffer: BytesMut::with_capacity(4096),
             search_depth,
         }
     }
@@ -68,7 +69,7 @@ impl PatternBuffer {
     }
 
     /// Take ownership of the buffer contents and reset.
-    pub fn take(&mut self) -> Vec<u8> {
+    pub fn take(&mut self) -> BytesMut {
         std::mem::take(&mut self.buffer)
     }
 
@@ -160,10 +161,91 @@ mod tests {
     }
 
     #[test]
-    fn test_take_clears_buffer() {
+    fn test_take_returns_bytes_mut() {
         let mut buffer = PatternBuffer::new(100);
         buffer.extend(b"test data");
-        assert_eq!(buffer.take(), b"test data");
+        let taken: BytesMut = buffer.take();
+        assert_eq!(&taken[..], b"test data");
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_take_is_reusable() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"first");
+        let first = buffer.take();
+        assert_eq!(&first[..], b"first");
+
+        // Buffer should be reusable after take
+        buffer.extend(b"second");
+        let second = buffer.take();
+        assert_eq!(&second[..], b"second");
+    }
+
+    #[test]
+    fn test_take_bytes_mut_can_freeze() {
+        // Verify the BytesMut from take() can be frozen to Bytes (zero-copy)
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"freezable data");
+        let buf = buffer.take();
+        let frozen = buf.freeze();
+        assert_eq!(&frozen[..], b"freezable data");
+    }
+
+    #[test]
+    fn test_multiple_extend_accumulates() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"hello ");
+        buffer.extend(b"world");
+        assert_eq!(buffer.as_slice(), b"hello world");
+    }
+
+    #[test]
+    fn test_empty_buffer() {
+        let buffer = PatternBuffer::new(100);
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.as_slice(), b"");
+    }
+
+    #[test]
+    fn test_default() {
+        let buffer = PatternBuffer::default();
+        assert_eq!(buffer.search_depth(), 1000);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_tail_contains() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"output\nrouter#");
+        let pattern = Regex::new(r"router#").unwrap();
+        assert!(buffer.tail_contains(&pattern));
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"data");
+        assert!(!buffer.is_empty());
+        buffer.clear();
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_as_str_lossy_valid_utf8() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"valid utf-8 text");
+        let s = buffer.as_str_lossy();
+        assert_eq!(&*s, "valid utf-8 text");
+    }
+
+    #[test]
+    fn test_as_str_lossy_invalid_utf8() {
+        let mut buffer = PatternBuffer::new(100);
+        buffer.extend(b"hello \xff world");
+        let s = buffer.as_str_lossy();
+        assert!(s.contains("hello"));
+        assert!(s.contains("world"));
     }
 }

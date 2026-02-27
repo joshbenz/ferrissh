@@ -45,6 +45,8 @@
 
 use std::sync::Arc;
 
+use bytes::BytesMut;
+
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 
 /// Platform name for Juniper JUNOS.
@@ -114,14 +116,60 @@ pub fn platform() -> PlatformDefinition {
 pub struct JuniperBehavior;
 
 impl VendorBehavior for JuniperBehavior {
-    fn post_process_output(&self, output: &str) -> String {
-        // Filter out [edit] context lines that JUNOS includes in config mode
-        output
-            .lines()
-            .filter(|line| !line.trim().starts_with("[edit"))
-            .collect::<Vec<_>>()
-            .join("\n")
+    fn post_process_output(&self, buf: &mut BytesMut) {
+        // Filter out [edit] context lines that JUNOS includes in config mode.
+        // In-place compaction: scan for lines starting with "[edit", skip them.
+        if memchr::memmem::find(&buf[..], b"[edit").is_none() {
+            return; // fast path: nothing to filter
+        }
+
+        let len = buf.len();
+        let had_trailing_newline = buf.last() == Some(&b'\n');
+        let mut write = 0;
+        let mut offset = 0;
+
+        while offset < len {
+            // Find end of current line
+            let line_end = memchr::memchr(b'\n', &buf[offset..])
+                .map(|pos| offset + pos + 1)
+                .unwrap_or(len);
+
+            // Check if line starts with "[edit" (after optional whitespace)
+            let skip = {
+                let line = &buf[offset..line_end];
+                let trimmed = trim_start_bytes(line);
+                trimmed.starts_with(b"[edit")
+            };
+
+            if !skip {
+                let line_len = line_end - offset;
+                if write != offset {
+                    // Need to compact: copy this line to write position
+                    // Use copy_within to avoid borrow conflicts
+                    buf.as_mut().copy_within(offset..line_end, write);
+                }
+                write += line_len;
+            }
+
+            offset = line_end;
+        }
+
+        // Remove trailing newline that may be left from a skipped last line
+        if write > 0 && buf[write - 1] == b'\n' && !had_trailing_newline {
+            write -= 1;
+        }
+
+        buf.truncate(write);
     }
+}
+
+/// Trim leading ASCII whitespace from a byte slice.
+fn trim_start_bytes(s: &[u8]) -> &[u8] {
+    let start = s
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(s.len());
+    &s[start..]
 }
 
 #[cfg(test)]
@@ -269,20 +317,85 @@ mod tests {
     }
 
     #[test]
-    fn test_post_process_output() {
+    fn test_post_process_no_edit_lines() {
         let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("Hostname: router\nModel: mx960");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"Hostname: router\nModel: mx960");
+    }
 
-        // Output without [edit] lines passes through
-        let output = "Hostname: router\nModel: mx960";
-        assert_eq!(behavior.post_process_output(output), output);
+    #[test]
+    fn test_post_process_edit_line_middle() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("ge-0/0/0\n[edit]\nge-0/0/1");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"ge-0/0/0\nge-0/0/1");
+    }
 
-        // [edit] lines are filtered out
-        let output = "ge-0/0/0\n[edit]\nge-0/0/1";
-        assert_eq!(behavior.post_process_output(output), "ge-0/0/0\nge-0/0/1");
+    #[test]
+    fn test_post_process_edit_interfaces() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("ge-0/0/0\n[edit interfaces]");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"ge-0/0/0");
+    }
 
-        // [edit interfaces] context lines are also filtered
-        let output = "ge-0/0/0\n[edit interfaces]";
-        assert_eq!(behavior.post_process_output(output), "ge-0/0/0");
+    #[test]
+    fn test_post_process_empty_buffer() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::new();
+        behavior.post_process_output(&mut buf);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_post_process_only_edit_line() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("[edit]");
+        behavior.post_process_output(&mut buf);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_post_process_multiple_edit_lines() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("config1\n[edit]\nconfig2\n[edit interfaces]\nconfig3");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"config1\nconfig2\nconfig3");
+    }
+
+    #[test]
+    fn test_post_process_edit_at_start() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("[edit]\nge-0/0/0\nge-0/0/1");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"ge-0/0/0\nge-0/0/1");
+    }
+
+    #[test]
+    fn test_post_process_edit_with_deep_path() {
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("output\n[edit protocols bgp group internal]\nmore output");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"output\nmore output");
+    }
+
+    #[test]
+    fn test_post_process_bracket_not_edit() {
+        // Lines with brackets but not [edit should be preserved
+        let behavior = JuniperBehavior;
+        let mut buf = BytesMut::from("[something else]\noutput");
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], b"[something else]\noutput");
+    }
+
+    #[test]
+    fn test_post_process_preserves_content_exactly() {
+        let behavior = JuniperBehavior;
+        let content = "set system host-name router1\nset system domain-name example.com";
+        let mut buf = BytesMut::from(content);
+        behavior.post_process_output(&mut buf);
+        assert_eq!(&buf[..], content.as_bytes());
     }
 
     #[test]
