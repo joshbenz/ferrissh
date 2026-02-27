@@ -20,7 +20,7 @@
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = JuniperConfigSession::new(&mut driver).await?;
+//! let mut session = JuniperConfigSession::new(driver.channel().unwrap()).await?;
 //! session.send_command("set system host-name lab-router").await?;
 //!
 //! let diff = session.diff().await?;
@@ -40,27 +40,27 @@ use log::{debug, warn};
 
 use std::time::Duration;
 
+use crate::driver::channel::Channel;
 use crate::driver::config_session::{
     ConfigSession, ConfirmableCommit, Diffable, Validatable, ValidationResult,
 };
 use crate::driver::response::Response;
-use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 
 use super::platform::PLATFORM_NAME;
 
 /// Juniper JUNOS configuration session guard.
 ///
-/// Holds `&mut GenericDriver` to prevent concurrent driver use.
+/// Holds `&mut Channel` to prevent concurrent channel use.
 /// Implements [`ConfigSession`], [`Diffable`], [`Validatable`], and [`ConfirmableCommit`].
 ///
 /// # Re-attach
 ///
-/// After calling [`detach()`](ConfigSession::detach), the driver remains in
+/// After calling [`detach()`](ConfigSession::detach), the channel remains in
 /// configuration mode. Call `JuniperConfigSession::new()` again to re-attach —
 /// `acquire_privilege("configuration")` is a no-op if already in config mode.
 pub struct JuniperConfigSession<'a> {
-    driver: &'a mut GenericDriver,
+    channel: &'a mut Channel,
     original_privilege: String,
     consumed: bool,
 }
@@ -70,19 +70,19 @@ impl<'a> JuniperConfigSession<'a> {
     ///
     /// Validates the platform is Juniper JUNOS, saves the current privilege
     /// level, and escalates to `configuration` mode via `configure`.
-    pub async fn new(driver: &'a mut GenericDriver) -> Result<Self> {
+    pub async fn new(channel: &'a mut Channel) -> Result<Self> {
         // Validate platform
-        if driver.platform().name != PLATFORM_NAME {
+        if channel.platform().name != PLATFORM_NAME {
             return Err(DriverError::InvalidConfig {
                 message: format!(
                     "JuniperConfigSession requires a Juniper JUNOS platform, got '{}'",
-                    driver.platform().name
+                    channel.platform().name
                 ),
             }
             .into());
         }
 
-        let original_privilege = driver
+        let original_privilege = channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
@@ -94,10 +94,10 @@ impl<'a> JuniperConfigSession<'a> {
         );
 
         // Enter configuration mode (no-op if already there)
-        driver.acquire_privilege("configuration").await?;
+        channel.acquire_privilege("configuration").await?;
 
         Ok(Self {
-            driver,
+            channel,
             original_privilege,
             consumed: false,
         })
@@ -106,7 +106,7 @@ impl<'a> JuniperConfigSession<'a> {
 
 impl ConfigSession for JuniperConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
-        self.driver.send_command(cmd).await
+        self.channel.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
@@ -114,18 +114,18 @@ impl ConfigSession for JuniperConfigSession<'_> {
         self.consumed = true;
 
         // commit and-quit commits and exits config mode in one command
-        self.driver.send_command("commit and-quit").await?;
+        self.channel.send_command("commit and-quit").await?;
 
         // Restore original privilege if needed
         let current = self
-            .driver
+            .channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
         if !self.original_privilege.is_empty() && current != self.original_privilege {
-            self.driver
+            self.channel
                 .acquire_privilege(&self.original_privilege)
                 .await?;
         }
@@ -138,18 +138,18 @@ impl ConfigSession for JuniperConfigSession<'_> {
         self.consumed = true;
 
         // Discard all uncommitted changes
-        self.driver.send_command("rollback 0").await?;
+        self.channel.send_command("rollback 0").await?;
 
         // Return to original privilege level (exits config mode)
         let current = self
-            .driver
+            .channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
             .unwrap_or_default();
 
         if !self.original_privilege.is_empty() && current != self.original_privilege {
-            self.driver
+            self.channel
                 .acquire_privilege(&self.original_privilege)
                 .await?;
         }
@@ -168,7 +168,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
 impl Diffable for JuniperConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("Juniper config session: diff");
-        let response = self.driver.send_command("show | compare").await?;
+        let response = self.channel.send_command("show | compare").await?;
         Ok(response.result.to_string())
     }
 }
@@ -176,7 +176,7 @@ impl Diffable for JuniperConfigSession<'_> {
 impl Validatable for JuniperConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
         debug!("Juniper config session: validate");
-        let response = self.driver.send_command("commit check").await?;
+        let response = self.channel.send_command("commit check").await?;
 
         if response.is_success() && response.result.contains("configuration check succeeds") {
             Ok(ValidationResult {
@@ -235,7 +235,7 @@ impl ConfirmableCommit for JuniperConfigSession<'_> {
         }
 
         let cmd = format!("commit confirmed {}", minutes);
-        self.driver.send_command(&cmd).await?;
+        self.channel.send_command(&cmd).await?;
 
         // Does NOT consume the session — user must later commit() to confirm
         // or let it auto-rollback

@@ -13,6 +13,7 @@
 //! - Privilege level management with graph-based navigation
 //! - Zero-copy [`Payload`] responses backed by reference-counted `Bytes`
 //! - In-place buffer normalization with SIMD-accelerated byte search
+//! - Multi-channel support: multiple PTY shells on a single SSH connection
 //! - Easy vendor extensibility
 //!
 //! ## Quick Start
@@ -42,16 +43,18 @@ pub mod channel;
 pub mod driver;
 pub mod error;
 pub mod platform;
+pub mod session;
 pub mod transport;
 
 // Re-export main types for convenience
 pub use driver::{
-    ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder, GenericConfigSession,
-    GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult, NamedSession, Payload,
-    Response, SessionState, Validatable, ValidationResult,
+    Channel, ChannelState, ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder,
+    GenericConfigSession, GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult,
+    NamedSession, Payload, Response, SessionState, Validatable, ValidationResult,
 };
 pub use error::{DisconnectReason, Error};
 pub use platform::{
     ConfDConfigSession, ConfDJStyleConfigSession, Platform, PlatformDefinition, PrivilegeLevel,
 };
+pub use session::{Session, SessionBuilder};
 pub use transport::HostKeyVerification;

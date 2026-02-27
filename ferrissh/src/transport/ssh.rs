@@ -243,6 +243,24 @@ impl SshTransport {
         &self.disconnect_rx
     }
 
+    /// Disconnect from the server.
+    ///
+    /// This sends an SSH disconnect message. Unlike [`close()`](Self::close),
+    /// this takes `&self` so it can be used when the transport is shared
+    /// (e.g., inside an `Arc`).
+    pub async fn disconnect(&self) -> std::result::Result<(), TransportError> {
+        debug!(
+            "disconnecting from {}:{}",
+            self.config.host, self.config.port
+        );
+
+        self.session
+            .disconnect(russh::Disconnect::ByApplication, "", "en")
+            .await
+            .map_err(TransportError::Ssh)?;
+        Ok(())
+    }
+
     /// Close the connection.
     pub async fn close(self) -> Result<()> {
         debug!(

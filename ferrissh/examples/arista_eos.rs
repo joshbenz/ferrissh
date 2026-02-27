@@ -108,7 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use ferrissh::{ConfigSession, Diffable};
 
         // Create a named session (isolated from other users)
-        let mut session = AristaConfigSession::new(&mut driver, "ferrissh-demo").await?;
+        let mut session =
+            AristaConfigSession::new(driver.channel().unwrap(), "ferrissh-demo").await?;
         println!("Entered named config session: ferrissh-demo");
 
         // Show any pending diffs

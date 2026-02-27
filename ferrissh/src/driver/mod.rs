@@ -4,6 +4,7 @@
 //! and managing privilege levels on network devices.
 
 mod builder;
+pub mod channel;
 pub mod config_session;
 mod generic;
 mod interactive;
@@ -12,6 +13,7 @@ mod privilege;
 pub(crate) mod response;
 
 pub use builder::DriverBuilder;
+pub use channel::{Channel, ChannelState};
 pub use config_session::{
     ConfigSession, ConfirmableCommit, Diffable, GenericConfigSession, NamedSession, Validatable,
     ValidationResult,

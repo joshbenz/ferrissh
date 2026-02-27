@@ -2,7 +2,7 @@
 //!
 //! Config sessions are treated as **transactions**, not privilege levels.
 //! They use Rust's ownership system for compile-time safety:
-//! - The guard holds `&mut GenericDriver`, preventing concurrent driver use
+//! - The guard holds `&mut Channel`, preventing concurrent channel use
 //! - `commit()`/`abort()` consume the guard, ensuring single-use
 //! - `detach()` releases the guard without ending the session
 //!
@@ -31,8 +31,7 @@ use std::time::Duration;
 
 use log::{debug, warn};
 
-use super::Driver;
-use super::generic::GenericDriver;
+use super::channel::Channel;
 use super::response::Response;
 use crate::error::{DriverError, Result};
 
@@ -120,13 +119,13 @@ pub struct ValidationResult {
 
 /// RAII guard for a generic configuration session.
 ///
-/// Holds `&mut GenericDriver` to prevent concurrent driver use.
+/// Holds `&mut Channel` to prevent concurrent channel use.
 /// Works for any vendor that has a privilege level with "config" in the name.
 ///
 /// For vendor-specific features (named sessions, diff, validate),
 /// use the vendor's own session type instead (e.g., `AristaConfigSession`).
 pub struct GenericConfigSession<'a> {
-    driver: &'a mut GenericDriver,
+    channel: &'a mut Channel,
     original_privilege: String,
     config_privilege: String,
     consumed: bool,
@@ -137,8 +136,8 @@ impl<'a> GenericConfigSession<'a> {
     ///
     /// Finds the configuration privilege level (any level with "config" in the name)
     /// and escalates to it.
-    pub async fn new(driver: &'a mut GenericDriver) -> Result<Self> {
-        let original_privilege = driver
+    pub async fn new(channel: &'a mut Channel) -> Result<Self> {
+        let original_privilege = channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
@@ -148,20 +147,20 @@ impl<'a> GenericConfigSession<'a> {
         // For platforms with disconnected subgraphs (e.g., Nokia SROS with both
         // MD-CLI and Classic CLI), this ensures we pick the right config level.
         let config_privilege = if !original_privilege.is_empty() {
-            driver
+            channel
                 .platform()
                 .privilege_levels
                 .keys()
                 .filter(|name| name.to_lowercase().contains("config"))
                 .find(|name| {
-                    driver
+                    channel
                         .privilege_manager()
                         .find_path(&original_privilege, name)
                         .is_ok()
                 })
                 .cloned()
         } else {
-            driver
+            channel
                 .platform()
                 .privilege_levels
                 .keys()
@@ -177,10 +176,10 @@ impl<'a> GenericConfigSession<'a> {
             original_privilege, config_privilege
         );
 
-        driver.acquire_privilege(&config_privilege).await?;
+        channel.acquire_privilege(&config_privilege).await?;
 
         Ok(Self {
-            driver,
+            channel,
             original_privilege,
             config_privilege,
             consumed: false,
@@ -190,14 +189,14 @@ impl<'a> GenericConfigSession<'a> {
 
 impl ConfigSession for GenericConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
-        self.driver.send_command(cmd).await
+        self.channel.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
         debug!("generic config session: commit");
         self.consumed = true;
         if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
-            self.driver
+            self.channel
                 .acquire_privilege(&self.original_privilege)
                 .await?;
         }
@@ -208,7 +207,7 @@ impl ConfigSession for GenericConfigSession<'_> {
         debug!("generic config session: abort");
         self.consumed = true;
         if !self.original_privilege.is_empty() && self.original_privilege != self.config_privilege {
-            self.driver
+            self.channel
                 .acquire_privilege(&self.original_privilege)
                 .await?;
         }
