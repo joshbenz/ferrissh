@@ -149,24 +149,26 @@ impl ConfigSession for ConfDConfigSession<'_> {
 
     async fn commit(mut self) -> Result<()> {
         debug!("{} config session: commit", self.platform_name);
-        self.consumed = true;
 
         // Commit the candidate configuration
         self.channel.send_command("commit").await?;
 
         // Restore original privilege (exits config mode)
-        self.restore_privilege().await
+        self.restore_privilege().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("{} config session: abort", self.platform_name);
-        self.consumed = true;
 
         // Discard all uncommitted changes
         self.channel.send_command("revert").await?;
 
         // Restore original privilege (exits config mode)
-        self.restore_privilege().await
+        self.restore_privilege().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     fn detach(mut self) -> Result<()> {

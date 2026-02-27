@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use secrecy::SecretString;
+
 /// Host key verification mode, analogous to OpenSSH's `StrictHostKeyChecking`.
 #[derive(Debug, Clone, Default)]
 pub enum HostKeyVerification {
@@ -20,7 +22,7 @@ pub enum HostKeyVerification {
 }
 
 /// SSH connection configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SshConfig {
     /// Target host (hostname or IP address).
     pub host: String,
@@ -84,19 +86,91 @@ impl SshConfig {
 }
 
 /// Authentication method for SSH connections.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum AuthMethod {
     /// No authentication (for testing only).
     None,
 
     /// Password authentication.
-    Password(String),
+    Password(SecretString),
 
     /// Private key authentication.
     PrivateKey {
         /// Path to the private key file.
         path: PathBuf,
         /// Optional passphrase for encrypted keys.
-        passphrase: Option<String>,
+        passphrase: Option<SecretString>,
     },
+}
+
+impl std::fmt::Debug for AuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Password(_) => write!(f, "Password(****)"),
+            Self::PrivateKey { path, passphrase } => f
+                .debug_struct("PrivateKey")
+                .field("path", path)
+                .field("passphrase", &passphrase.as_ref().map(|_| "****"))
+                .finish(),
+        }
+    }
+}
+
+impl std::fmt::Debug for SshConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth", &self.auth)
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_authmethod_debug_redacts_password() {
+        let auth = AuthMethod::Password(SecretString::from("super_secret_password"));
+        let debug_output = format!("{:?}", auth);
+        assert!(!debug_output.contains("super_secret_password"));
+        assert!(debug_output.contains("****"));
+    }
+
+    #[test]
+    fn test_authmethod_debug_redacts_passphrase() {
+        let auth = AuthMethod::PrivateKey {
+            path: PathBuf::from("/home/user/.ssh/id_rsa"),
+            passphrase: Some(SecretString::from("my_passphrase")),
+        };
+        let debug_output = format!("{:?}", auth);
+        assert!(!debug_output.contains("my_passphrase"));
+        assert!(debug_output.contains("****"));
+        assert!(debug_output.contains("id_rsa"));
+    }
+
+    #[test]
+    fn test_sshconfig_debug_redacts_credentials() {
+        let config = SshConfig {
+            host: "192.168.1.1".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth: AuthMethod::Password(SecretString::from("secret_password")),
+            timeout: Duration::from_secs(30),
+            terminal_width: 120,
+            terminal_height: 24,
+            host_key_verification: HostKeyVerification::AcceptNew,
+            known_hosts_path: None,
+            keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_max: 3,
+            inactivity_timeout: None,
+        };
+        let debug_output = format!("{:?}", config);
+        assert!(!debug_output.contains("secret_password"));
+        assert!(debug_output.contains("192.168.1.1"));
+    }
 }

@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use secrecy::SecretString;
+
 use super::generic::GenericDriver;
 use crate::error::{DriverError, PlatformError, Result};
 use crate::platform::{Platform, PlatformDefinition};
@@ -76,7 +78,7 @@ impl DriverBuilder {
 
     /// Set password authentication.
     pub fn password(mut self, password: impl Into<String>) -> Self {
-        self.auth = AuthMethod::Password(password.into());
+        self.auth = AuthMethod::Password(SecretString::from(password.into()));
         self
     }
 
@@ -97,7 +99,7 @@ impl DriverBuilder {
     ) -> Self {
         self.auth = AuthMethod::PrivateKey {
             path: key_path.into(),
-            passphrase: Some(passphrase.into()),
+            passphrase: Some(SecretString::from(passphrase.into())),
         };
         self
     }
@@ -194,6 +196,19 @@ impl DriverBuilder {
     /// This creates the driver but does not connect. Call `open()` on the
     /// returned driver to establish the connection.
     pub fn build(self) -> Result<GenericDriver> {
+        if self.host.is_empty() {
+            return Err(DriverError::InvalidConfig {
+                message: "Host cannot be empty".to_string(),
+            }
+            .into());
+        }
+        if self.port == 0 {
+            return Err(DriverError::InvalidConfig {
+                message: "Port cannot be 0".to_string(),
+            }
+            .into());
+        }
+
         let username = self.username.ok_or_else(|| DriverError::InvalidConfig {
             message: "Username is required".to_string(),
         })?;
@@ -235,5 +250,38 @@ impl DriverBuilder {
             platform,
             self.normalize_output,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::Platform;
+
+    #[test]
+    fn test_driver_builder_empty_host() {
+        let result = DriverBuilder::new("")
+            .username("admin")
+            .password("secret")
+            .platform(Platform::Linux)
+            .build();
+        let err = result.err().expect("expected error for empty host");
+        assert!(
+            err.to_string().contains("Host cannot be empty"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_driver_builder_port_zero() {
+        let result = DriverBuilder::new("192.168.1.1")
+            .port(0)
+            .username("admin")
+            .password("secret")
+            .platform(Platform::Linux)
+            .build();
+        let err = result.err().expect("expected error for port 0");
+        assert!(err.to_string().contains("Port cannot be 0"), "got: {}", err);
     }
 }

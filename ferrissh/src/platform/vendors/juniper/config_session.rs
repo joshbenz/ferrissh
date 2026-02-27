@@ -111,7 +111,6 @@ impl ConfigSession for JuniperConfigSession<'_> {
 
     async fn commit(mut self) -> Result<()> {
         debug!("Juniper config session: commit");
-        self.consumed = true;
 
         // commit and-quit commits and exits config mode in one command
         self.channel.send_command("commit and-quit").await?;
@@ -130,12 +129,12 @@ impl ConfigSession for JuniperConfigSession<'_> {
                 .await?;
         }
 
+        self.consumed = true;
         Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("Juniper config session: abort");
-        self.consumed = true;
 
         // Discard all uncommitted changes
         self.channel.send_command("rollback 0").await?;
@@ -154,6 +153,7 @@ impl ConfigSession for JuniperConfigSession<'_> {
                 .await?;
         }
 
+        self.consumed = true;
         Ok(())
     }
 

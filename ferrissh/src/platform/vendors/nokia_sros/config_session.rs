@@ -131,7 +131,6 @@ impl ConfigSession for NokiaConfigSession<'_> {
 
     async fn commit(mut self) -> Result<()> {
         debug!("Nokia config session: commit");
-        self.consumed = true;
 
         // Commit the candidate configuration
         self.channel.send_command("commit").await?;
@@ -155,12 +154,12 @@ impl ConfigSession for NokiaConfigSession<'_> {
             }
         }
 
+        self.consumed = true;
         Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("Nokia config session: abort");
-        self.consumed = true;
 
         // Discard all uncommitted changes (avoids quit-config confirmation prompt)
         self.channel.send_command("discard").await?;
@@ -184,6 +183,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
             }
         }
 
+        self.consumed = true;
         Ok(())
     }
 

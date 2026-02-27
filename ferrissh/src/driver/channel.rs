@@ -7,12 +7,14 @@
 //! Channels are created via [`Session::open_channel()`](crate::Session::open_channel)
 //! or [`GenericDriver::open_channel()`](super::GenericDriver::open_channel).
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use regex::bytes::Regex;
 use tokio::sync::watch;
+
+use secrecy::{ExposeSecret, SecretString};
 
 use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
@@ -24,6 +26,10 @@ use crate::error::{ChannelError, DisconnectReason, DriverError, Error, Result, T
 use crate::platform::PlatformDefinition;
 use crate::session::Session;
 use log::{debug, trace, warn};
+
+/// Fallback prompt pattern used when the combined platform pattern fails to compile.
+pub(crate) static FALLBACK_PROMPT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[$#>]\s*$").expect("hardcoded fallback regex must compile"));
 
 /// The state of a channel's PTY shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +78,7 @@ pub struct Channel {
     last_command_at: Option<Instant>,
 
     /// Password for privilege escalation (extracted from auth config).
-    auth_password: Option<String>,
+    auth_password: Option<SecretString>,
 }
 
 impl Channel {
@@ -84,7 +90,7 @@ impl Channel {
         prompt_pattern: Regex,
         normalize: bool,
         disconnect_rx: watch::Receiver<Option<DisconnectReason>>,
-        auth_password: Option<String>,
+        auth_password: Option<SecretString>,
     ) -> Self {
         let privilege_manager = PrivilegeManager::new(session.platform().privilege_levels.clone());
 
@@ -274,7 +280,7 @@ impl Channel {
 
                 // Send password
                 if let Some(ref pwd) = self.auth_password {
-                    let pwd_result = self.pty.send(pwd).await;
+                    let pwd_result = self.pty.send(pwd.expose_secret()).await;
 
                     if let Err(e) = pwd_result {
                         if Self::is_connection_error(&e) {
@@ -298,10 +304,21 @@ impl Channel {
             };
 
             // Verify we reached the expected privilege
-            if let Ok(level) = self.privilege_manager.determine_from_prompt(&prompt) {
-                let level_name = level.name.clone();
-                self.privilege_manager.set_current(&level_name)?;
-                if level_name != *to {
+            match self.privilege_manager.determine_from_prompt(&prompt) {
+                Ok(level) => {
+                    let level_name = level.name.clone();
+                    self.privilege_manager.set_current(&level_name)?;
+                    if level_name != *to {
+                        return Err(
+                            DriverError::PrivilegeAcquisitionFailed { target: to.clone() }.into(),
+                        );
+                    }
+                }
+                Err(_) => {
+                    warn!(
+                        "privilege transition {} -> {}: could not determine privilege from prompt, state may be inconsistent",
+                        from, to
+                    );
                     return Err(
                         DriverError::PrivilegeAcquisitionFailed { target: to.clone() }.into(),
                     );
@@ -521,8 +538,7 @@ impl Channel {
             .collect();
 
         let combined = patterns.join("|");
-        self.prompt_pattern =
-            Regex::new(&combined).unwrap_or_else(|_| Regex::new(r"[$#>]\s*$").unwrap());
+        self.prompt_pattern = Regex::new(&combined).unwrap_or_else(|_| FALLBACK_PROMPT.clone());
     }
 
     /// Close this channel.
@@ -534,15 +550,26 @@ impl Channel {
         }
 
         debug!("closing channel");
+        self.state = ChannelState::Closing;
 
-        // Execute on_close commands while still Ready
+        // Execute on_close commands (best-effort via PTY, since check_ready requires Ready)
         let on_close = self.session.platform().on_close_commands.clone();
         for cmd in &on_close {
-            let _ = self.send_command(cmd).await;
+            if let Err(e) = self.pty.send(cmd).await {
+                warn!("on_close command {:?} failed to send: {}", cmd, e);
+                break;
+            }
+            // Best-effort wait for prompt
+            if let Err(e) = self
+                .pty
+                .read_until_pattern(&self.prompt_pattern, self.timeout)
+                .await
+            {
+                warn!("on_close command {:?} failed to complete: {}", cmd, e);
+                break;
+            }
         }
 
-        self.state = ChannelState::Closing;
-        // PTY is dropped when Channel is dropped
         self.state = ChannelState::Dead;
 
         Ok(())
@@ -1283,6 +1310,15 @@ mod tests {
         assert!(resp.contains("router1"));
         assert_eq!(resp.lines().count(), 1);
         assert_eq!(format!("{}", resp), "Hostname: router1");
+    }
+
+    #[test]
+    fn test_fallback_prompt_compiles() {
+        // Verify the LazyLock FALLBACK_PROMPT can be accessed without panic
+        let _ = FALLBACK_PROMPT.clone();
+        assert!(FALLBACK_PROMPT.is_match(b"router# "));
+        assert!(FALLBACK_PROMPT.is_match(b"user$ "));
+        assert!(FALLBACK_PROMPT.is_match(b"switch> "));
     }
 
     #[test]

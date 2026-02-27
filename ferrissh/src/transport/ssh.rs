@@ -9,6 +9,8 @@ use russh::client::{self, Handle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 use tokio::sync::watch;
 
+use secrecy::ExposeSecret;
+
 use super::config::{AuthMethod, HostKeyVerification, SshConfig};
 use crate::error::{DisconnectReason, Result, TransportError};
 
@@ -138,8 +140,9 @@ impl SshTransport {
                 .map_err(TransportError::Ssh)?
                 .success(),
             AuthMethod::Password(password) => {
+                let pwd = password.expose_secret();
                 let result = session
-                    .authenticate_password(&config.username, password)
+                    .authenticate_password(&config.username, pwd)
                     .await
                     .map_err(TransportError::Ssh)?;
 
@@ -148,12 +151,11 @@ impl SshTransport {
                 } else {
                     // Password auth failed — try keyboard-interactive as fallback
                     debug!("Password auth failed, trying keyboard-interactive");
-                    Self::authenticate_keyboard_interactive(session, &config.username, password)
-                        .await?
+                    Self::authenticate_keyboard_interactive(session, &config.username, pwd).await?
                 }
             }
             AuthMethod::PrivateKey { path, passphrase } => {
-                let key = load_secret_key(path, passphrase.as_deref())
+                let key = load_secret_key(path, passphrase.as_ref().map(|s| s.expose_secret()))
                     .map_err(|e| TransportError::Key(e.to_string()))?;
 
                 // Get the best RSA hash algorithm supported by the server

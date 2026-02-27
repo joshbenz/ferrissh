@@ -213,7 +213,14 @@ impl Driver for GenericDriver {
         let session = Session::new(transport, self.platform.clone(), self.ssh_config.clone());
 
         // Open a channel (waits for prompt, runs on_open, determines privilege)
-        let mut channel = session.open_channel().await?;
+        let mut channel = match session.open_channel().await {
+            Ok(ch) => ch,
+            Err(e) => {
+                // Clean up session if channel open fails
+                session.close().await.ok();
+                return Err(e);
+            }
+        };
         channel.set_normalize(self.normalize);
 
         self.session = Some(session);
@@ -228,17 +235,13 @@ impl Driver for GenericDriver {
             SessionState::Ready => {
                 debug!("closing connection");
 
-                // Close the channel (runs on_close commands)
-                if let Some(ref mut channel) = self.channel {
+                if let Some(mut channel) = self.channel.take() {
                     channel.close().await?;
                 }
-                self.channel.take();
 
-                // Close the session
-                if let Some(ref session) = self.session {
+                if let Some(session) = self.session.take() {
                     session.close().await?;
                 }
-                self.session.take();
             }
             SessionState::Dead => {
                 debug!("cleaning up dead connection");

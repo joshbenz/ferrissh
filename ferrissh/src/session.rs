@@ -45,6 +45,8 @@ use crate::channel::{PtyChannel, PtyConfig};
 use crate::driver::channel::Channel;
 use crate::error::{DisconnectReason, DriverError, PlatformError, Result};
 use crate::platform::{Platform, PlatformDefinition};
+use secrecy::SecretString;
+
 use crate::transport::SshTransport;
 use crate::transport::config::{AuthMethod, HostKeyVerification, SshConfig};
 
@@ -136,9 +138,14 @@ impl Session {
         );
 
         // Wait for initial prompt, run on_open, determine privilege
-        channel.initialize().await?;
-
-        Ok(channel)
+        match channel.initialize().await {
+            Ok(()) => Ok(channel),
+            Err(e) => {
+                // Close the PTY to avoid leaking the russh channel
+                channel.close().await.ok();
+                Err(e)
+            }
+        }
     }
 
     /// Check if the underlying SSH transport is still alive.
@@ -219,7 +226,7 @@ fn build_combined_pattern(platform: &PlatformDefinition) -> Regex {
         .collect();
 
     let combined = patterns.join("|");
-    Regex::new(&combined).unwrap_or_else(|_| Regex::new(r"[$#>]\s*$").unwrap())
+    Regex::new(&combined).unwrap_or_else(|_| crate::driver::channel::FALLBACK_PROMPT.clone())
 }
 
 // =============================================================================
@@ -297,7 +304,7 @@ impl SessionBuilder {
 
     /// Set password authentication.
     pub fn password(mut self, password: impl Into<String>) -> Self {
-        self.auth = AuthMethod::Password(password.into());
+        self.auth = AuthMethod::Password(SecretString::from(password.into()));
         self
     }
 
@@ -318,7 +325,7 @@ impl SessionBuilder {
     ) -> Self {
         self.auth = AuthMethod::PrivateKey {
             path: key_path.into(),
-            passphrase: Some(passphrase.into()),
+            passphrase: Some(SecretString::from(passphrase.into())),
         };
         self
     }
@@ -384,6 +391,19 @@ impl SessionBuilder {
     /// No channel is opened yet — call [`Session::open_channel()`] to
     /// create PTY shells.
     pub async fn connect(self) -> Result<Session> {
+        if self.host.is_empty() {
+            return Err(DriverError::InvalidConfig {
+                message: "Host cannot be empty".to_string(),
+            }
+            .into());
+        }
+        if self.port == 0 {
+            return Err(DriverError::InvalidConfig {
+                message: "Port cannot be 0".to_string(),
+            }
+            .into());
+        }
+
         let username = self.username.ok_or_else(|| DriverError::InvalidConfig {
             message: "Username is required".to_string(),
         })?;
@@ -428,5 +448,37 @@ impl SessionBuilder {
         let transport = SshTransport::connect(ssh_config.clone()).await?;
 
         Ok(Session::new(transport, platform, ssh_config))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_session_builder_empty_host() {
+        let result = SessionBuilder::new("")
+            .username("admin")
+            .password("secret")
+            .platform(Platform::Linux)
+            .connect()
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Host cannot be empty"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_port_zero() {
+        let result = SessionBuilder::new("192.168.1.1")
+            .port(0)
+            .username("admin")
+            .password("secret")
+            .platform(Platform::Linux)
+            .connect()
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Port cannot be 0"), "got: {}", err);
     }
 }

@@ -73,6 +73,29 @@ impl<'a> AristaConfigSession<'a> {
     pub async fn new(channel: &'a mut Channel, session_name: impl Into<String>) -> Result<Self> {
         let session_name = session_name.into();
 
+        // Validate session name (Arista allows alphanumeric, hyphens, underscores, max 63 chars)
+        if session_name.is_empty() || session_name.len() > 63 {
+            return Err(DriverError::InvalidConfig {
+                message: format!(
+                    "Session name must be 1-63 characters, got {}",
+                    session_name.len()
+                ),
+            }
+            .into());
+        }
+        if !session_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(DriverError::InvalidConfig {
+                message: format!(
+                    "Session name contains invalid characters: '{}'. Only ASCII alphanumeric, hyphens, and underscores allowed.",
+                    session_name
+                ),
+            }
+            .into());
+        }
+
         // Validate platform
         if channel.platform().name != PLATFORM_NAME {
             return Err(DriverError::InvalidConfig {
@@ -177,7 +200,6 @@ impl ConfigSession for AristaConfigSession<'_> {
 
     async fn commit(mut self) -> Result<()> {
         debug!("Arista config session: commit");
-        self.consumed = true;
 
         // Commit the session changes
         self.channel.send_command("commit").await?;
@@ -185,17 +207,20 @@ impl ConfigSession for AristaConfigSession<'_> {
         // Exit the session (back to privilege_exec)
         self.channel.send_command("end").await?;
 
-        self.cleanup().await
+        self.cleanup().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("Arista config session: abort");
-        self.consumed = true;
 
         // Abort discards changes and exits the session
         self.channel.send_command("abort").await?;
 
-        self.cleanup().await
+        self.cleanup().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     fn detach(mut self) -> Result<()> {
@@ -362,5 +387,63 @@ mod tests {
             format_timer(Duration::from_secs(86400)),
             "commit timer 24:00:00"
         );
+    }
+
+    // Session name validation tests (sync, no SSH connection needed)
+
+    fn validate_session_name(name: &str) -> std::result::Result<(), String> {
+        if name.is_empty() || name.len() > 63 {
+            return Err(format!(
+                "Session name must be 1-63 characters, got {}",
+                name.len()
+            ));
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(format!(
+                "Session name contains invalid characters: '{}'",
+                name
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_name_valid() {
+        assert!(validate_session_name("my-session_1").is_ok());
+        assert!(validate_session_name("a").is_ok());
+        assert!(validate_session_name("test-session").is_ok());
+        assert!(validate_session_name("UPPER_lower_123").is_ok());
+    }
+
+    #[test]
+    fn test_session_name_empty() {
+        assert!(validate_session_name("").is_err());
+    }
+
+    #[test]
+    fn test_session_name_too_long() {
+        let long_name = "a".repeat(64);
+        assert!(validate_session_name(&long_name).is_err());
+        // 63 chars should be fine
+        let ok_name = "a".repeat(63);
+        assert!(validate_session_name(&ok_name).is_ok());
+    }
+
+    #[test]
+    fn test_session_name_injection() {
+        assert!(validate_session_name("test; show version").is_err());
+    }
+
+    #[test]
+    fn test_session_name_newline() {
+        assert!(validate_session_name("test\nset").is_err());
+    }
+
+    #[test]
+    fn test_session_name_spaces() {
+        assert!(validate_session_name("my session").is_err());
     }
 }
