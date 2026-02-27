@@ -19,7 +19,7 @@ Ferrissh provides a high-level async API for interacting with network devices ov
 - **ConfD Support** - Generic ConfD config session shared by both C-style and J-style CLI vendors
 - **Interactive Commands** - Handle prompts requiring user input (confirmations, passwords)
 - **Configuration Mode** - Automatic privilege escalation for config commands
-- **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. O(1) clones, ~4x less memory than naive `String` pipelines
+- **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. Cheap clones.
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
 - **Data-Driven Platforms** - Platforms are pure data (prompts, privilege graphs, failure patterns) with optional extension traits for configuration sessions
 
@@ -323,7 +323,7 @@ for line in response.result.lines() {         // str::lines
 }
 let trimmed: &str = response.result.trim();   // str::trim
 
-// Cloning is O(1) (reference count increment, no data copy)
+// Cloning is cheap (reference count increment, no data copy)
 let cloned = response.result.clone();
 
 // Convert to owned String when needed

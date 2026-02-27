@@ -423,7 +423,7 @@ mod tests {
             Duration::from_millis(50),
         );
         let cloned = step.clone();
-        // Payload clone is O(1)
+        // Payload clone is ref-counted, same underlying pointer
         assert_eq!(
             step.output.as_bytes().as_ptr(),
             cloned.output.as_bytes().as_ptr()

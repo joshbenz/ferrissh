@@ -178,7 +178,7 @@ mod tests {
         );
         let cloned = resp.clone();
         assert_eq!(&*cloned.result, &*resp.result);
-        // Payload clone is O(1), same underlying pointer
+        // Payload clone is ref-counted, same underlying pointer
         assert_eq!(
             cloned.result.as_bytes().as_ptr(),
             resp.result.as_bytes().as_ptr()

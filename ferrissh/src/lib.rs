@@ -11,7 +11,7 @@
 //! - Multi-vendor support (Linux, Juniper, Arista, Nokia, Arrcus)
 //! - Efficient pattern buffer matching (scrapli-style tail search)
 //! - Privilege level management with graph-based navigation
-//! - Zero-copy [`Payload`] responses backed by reference-counted `Bytes` (O(1) clone)
+//! - Zero-copy [`Payload`] responses backed by reference-counted `Bytes`
 //! - In-place buffer normalization with SIMD-accelerated byte search
 //! - Easy vendor extensibility
 //!

@@ -14,11 +14,11 @@ use bytes::{Bytes, BytesMut};
 
 /// A validated UTF-8 payload backed by reference-counted bytes.
 ///
-/// `Payload` implements `Deref<Target = str>`, so existing code using
+/// `Payload` implements `Deref<Target = str>`, so you can use
 /// `.contains()`, `.lines()`, `.trim()`, `println!("{}", payload)`, etc.
-/// works unchanged via deref coercion.
+/// directly via deref coercion.
 ///
-/// Cloning is O(1) — it increments a reference count rather than copying data.
+/// Cloning is cheap — it increments a reference count rather than copying data.
 #[derive(Clone)]
 pub struct Payload {
     bytes: Bytes,
@@ -283,7 +283,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Clone (O(1) ref-counted)
+    // Clone (ref-counted, no data copy)
     // =========================================================================
 
     #[test]

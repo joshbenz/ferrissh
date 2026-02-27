@@ -844,7 +844,6 @@ fn normalize_linefeeds_in_place(buf: &mut BytesMut) {
 /// Strip the command echo from the beginning of the buffer.
 ///
 /// If the first line matches the command, advance past it.
-/// Uses `BytesMut::advance()` for O(1) pointer adjustment.
 fn strip_echo_in_place(buf: &mut BytesMut, command: &str) {
     if buf.is_empty() {
         return;
