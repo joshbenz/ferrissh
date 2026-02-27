@@ -18,7 +18,7 @@
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = AristaConfigSession::new(&mut driver, "my-changes").await?;
+//! let mut session = AristaConfigSession::new(driver.channel().unwrap(), "my-changes").await?;
 //! session.send_command("interface Ethernet1").await?;
 //! session.send_command("description Updated via ferrissh").await?;
 //!
@@ -34,9 +34,9 @@ use log::{debug, warn};
 
 use std::time::Duration;
 
+use crate::driver::channel::Channel;
 use crate::driver::config_session::{ConfigSession, ConfirmableCommit, Diffable, NamedSession};
 use crate::driver::response::Response;
-use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 use crate::platform::PrivilegeLevel;
 
@@ -44,7 +44,7 @@ use super::platform::PLATFORM_NAME;
 
 /// Arista EOS named configuration session guard.
 ///
-/// Holds `&mut GenericDriver` to prevent concurrent driver use.
+/// Holds `&mut Channel` to prevent concurrent channel use.
 /// Implements [`ConfigSession`], [`Diffable`], and [`NamedSession`].
 ///
 /// # Re-attach
@@ -57,7 +57,7 @@ use super::platform::PLATFORM_NAME;
 /// Cross-program re-attach also works: Arista's `configure session {name}`
 /// re-enters an existing session on the device.
 pub struct AristaConfigSession<'a> {
-    driver: &'a mut GenericDriver,
+    channel: &'a mut Channel,
     session_name: String,
     original_privilege: String,
     session_priv_name: String,
@@ -70,24 +70,44 @@ impl<'a> AristaConfigSession<'a> {
     /// If the session already exists on the device, this re-enters it.
     /// If the dynamic privilege level is already registered (after a detach),
     /// registration is skipped and `acquire_privilege` is a no-op.
-    pub async fn new(
-        driver: &'a mut GenericDriver,
-        session_name: impl Into<String>,
-    ) -> Result<Self> {
+    pub async fn new(channel: &'a mut Channel, session_name: impl Into<String>) -> Result<Self> {
         let session_name = session_name.into();
 
-        // Validate platform
-        if driver.platform().name != PLATFORM_NAME {
+        // Validate session name (Arista allows alphanumeric, hyphens, underscores, max 63 chars)
+        if session_name.is_empty() || session_name.len() > 63 {
             return Err(DriverError::InvalidConfig {
                 message: format!(
-                    "AristaConfigSession requires an Arista EOS platform, got '{}'",
-                    driver.platform().name
+                    "Session name must be 1-63 characters, got {}",
+                    session_name.len()
+                ),
+            }
+            .into());
+        }
+        if !session_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(DriverError::InvalidConfig {
+                message: format!(
+                    "Session name contains invalid characters: '{}'. Only ASCII alphanumeric, hyphens, and underscores allowed.",
+                    session_name
                 ),
             }
             .into());
         }
 
-        let original_privilege = driver
+        // Validate platform
+        if channel.platform().name != PLATFORM_NAME {
+            return Err(DriverError::InvalidConfig {
+                message: format!(
+                    "AristaConfigSession requires an Arista EOS platform, got '{}'",
+                    channel.platform().name
+                ),
+            }
+            .into());
+        }
+
+        let original_privilege = channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
@@ -96,7 +116,10 @@ impl<'a> AristaConfigSession<'a> {
         let session_priv_name = format!("config_session_{}", session_name);
 
         // Check if dynamic level already registered (re-attach after detach)
-        let already_registered = driver.privilege_manager().get(&session_priv_name).is_some();
+        let already_registered = channel
+            .privilege_manager()
+            .get(&session_priv_name)
+            .is_some();
 
         if !already_registered {
             debug!(
@@ -120,10 +143,10 @@ impl<'a> AristaConfigSession<'a> {
                 .with_escalate(format!("configure session {}", session_name))
                 .with_deescalate("end");
 
-            driver
+            channel
                 .privilege_manager_mut()
                 .register_dynamic_level(session_priv);
-            driver.rebuild_prompt_pattern();
+            channel.rebuild_prompt_pattern();
         }
 
         debug!(
@@ -132,10 +155,10 @@ impl<'a> AristaConfigSession<'a> {
         );
 
         // Enter the session (no-op if already there after re-attach)
-        driver.acquire_privilege(&session_priv_name).await?;
+        channel.acquire_privilege(&session_priv_name).await?;
 
         Ok(Self {
-            driver,
+            channel,
             session_name,
             original_privilege,
             session_priv_name,
@@ -145,22 +168,22 @@ impl<'a> AristaConfigSession<'a> {
 
     /// Clean up the dynamic privilege level and restore original privilege.
     async fn cleanup(&mut self) -> Result<()> {
-        self.driver
+        self.channel
             .privilege_manager_mut()
             .remove_dynamic_level(&self.session_priv_name);
-        self.driver.rebuild_prompt_pattern();
+        self.channel.rebuild_prompt_pattern();
 
         // Restore original privilege if known and different from current
         if !self.original_privilege.is_empty() {
             let current = self
-                .driver
+                .channel
                 .privilege_manager()
                 .current()
                 .map(|l| l.name.clone())
                 .unwrap_or_default();
 
             if current != self.original_privilege {
-                self.driver
+                self.channel
                     .acquire_privilege(&self.original_privilege)
                     .await?;
             }
@@ -172,30 +195,32 @@ impl<'a> AristaConfigSession<'a> {
 
 impl ConfigSession for AristaConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
-        self.driver.send_command(cmd).await
+        self.channel.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
         debug!("Arista config session: commit");
-        self.consumed = true;
 
         // Commit the session changes
-        self.driver.send_command("commit").await?;
+        self.channel.send_command("commit").await?;
 
         // Exit the session (back to privilege_exec)
-        self.driver.send_command("end").await?;
+        self.channel.send_command("end").await?;
 
-        self.cleanup().await
+        self.cleanup().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("Arista config session: abort");
-        self.consumed = true;
 
         // Abort discards changes and exits the session
-        self.driver.send_command("abort").await?;
+        self.channel.send_command("abort").await?;
 
-        self.cleanup().await
+        self.cleanup().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     fn detach(mut self) -> Result<()> {
@@ -210,7 +235,7 @@ impl Diffable for AristaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("Arista config session: diff");
         let response = self
-            .driver
+            .channel
             .send_command("show session-config diffs")
             .await?;
         Ok(response.result.to_string())
@@ -238,7 +263,7 @@ impl ConfirmableCommit for AristaConfigSession<'_> {
             (total % 3600) / 60,
             total % 60,
         );
-        self.driver.send_command(&cmd).await?;
+        self.channel.send_command(&cmd).await?;
 
         Ok(())
     }
@@ -362,5 +387,63 @@ mod tests {
             format_timer(Duration::from_secs(86400)),
             "commit timer 24:00:00"
         );
+    }
+
+    // Session name validation tests (sync, no SSH connection needed)
+
+    fn validate_session_name(name: &str) -> std::result::Result<(), String> {
+        if name.is_empty() || name.len() > 63 {
+            return Err(format!(
+                "Session name must be 1-63 characters, got {}",
+                name.len()
+            ));
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(format!(
+                "Session name contains invalid characters: '{}'",
+                name
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_name_valid() {
+        assert!(validate_session_name("my-session_1").is_ok());
+        assert!(validate_session_name("a").is_ok());
+        assert!(validate_session_name("test-session").is_ok());
+        assert!(validate_session_name("UPPER_lower_123").is_ok());
+    }
+
+    #[test]
+    fn test_session_name_empty() {
+        assert!(validate_session_name("").is_err());
+    }
+
+    #[test]
+    fn test_session_name_too_long() {
+        let long_name = "a".repeat(64);
+        assert!(validate_session_name(&long_name).is_err());
+        // 63 chars should be fine
+        let ok_name = "a".repeat(63);
+        assert!(validate_session_name(&ok_name).is_ok());
+    }
+
+    #[test]
+    fn test_session_name_injection() {
+        assert!(validate_session_name("test; show version").is_err());
+    }
+
+    #[test]
+    fn test_session_name_newline() {
+        assert!(validate_session_name("test\nset").is_err());
+    }
+
+    #[test]
+    fn test_session_name_spaces() {
+        assert!(validate_session_name("my session").is_err());
     }
 }

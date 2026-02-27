@@ -31,7 +31,7 @@
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = arrcus_arcos::config_session(&mut driver).await?;
+//! let mut session = arrcus_arcos::config_session(driver.channel().unwrap()).await?;
 //! session.send_command("set system host-name lab-router").await?;
 //!
 //! let diff = session.diff().await?;
@@ -51,11 +51,11 @@ use log::{debug, warn};
 
 use std::time::Duration;
 
+use crate::driver::channel::Channel;
 use crate::driver::config_session::{
     ConfigSession, ConfirmableCommit, Diffable, Validatable, ValidationResult,
 };
 use crate::driver::response::Response;
-use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 
 /// ConfD configuration session guard.
@@ -64,16 +64,16 @@ use crate::error::{DriverError, Result};
 /// Works with both C-style and J-style ConfD CLIs — the config session
 /// commands are identical; only the prompts differ (defined in `platform.rs`).
 ///
-/// Holds `&mut GenericDriver` to prevent concurrent driver use.
+/// Holds `&mut Channel` to prevent concurrent channel use.
 /// Implements [`ConfigSession`], [`Diffable`], [`Validatable`], and [`ConfirmableCommit`].
 ///
 /// # Re-attach
 ///
-/// After calling [`detach()`](ConfigSession::detach), the driver remains in
+/// After calling [`detach()`](ConfigSession::detach), the channel remains in
 /// configuration mode. Create a new session to re-attach —
 /// `acquire_privilege("configuration")` is a no-op if already in config mode.
 pub struct ConfDConfigSession<'a> {
-    driver: &'a mut GenericDriver,
+    channel: &'a mut Channel,
     original_privilege: String,
     platform_name: &'static str,
     consumed: bool,
@@ -82,25 +82,25 @@ pub struct ConfDConfigSession<'a> {
 impl<'a> ConfDConfigSession<'a> {
     /// Enter ConfD configuration mode.
     ///
-    /// Validates the driver's platform matches `platform_name`, saves the
+    /// Validates the channel's platform matches `platform_name`, saves the
     /// current privilege level, and escalates to `configuration` mode.
     ///
     /// Vendor modules typically wrap this with a convenience function that
     /// pre-fills `platform_name`.
-    pub async fn new(driver: &'a mut GenericDriver, platform_name: &'static str) -> Result<Self> {
+    pub async fn new(channel: &'a mut Channel, platform_name: &'static str) -> Result<Self> {
         // Validate platform
-        if driver.platform().name != platform_name {
+        if channel.platform().name != platform_name {
             return Err(DriverError::InvalidConfig {
                 message: format!(
                     "ConfD config session requires platform '{}', got '{}'",
                     platform_name,
-                    driver.platform().name
+                    channel.platform().name
                 ),
             }
             .into());
         }
 
-        let original_privilege = driver
+        let original_privilege = channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
@@ -112,28 +112,28 @@ impl<'a> ConfDConfigSession<'a> {
         );
 
         // Enter configuration mode (no-op if already there)
-        driver.acquire_privilege("configuration").await?;
+        channel.acquire_privilege("configuration").await?;
 
         Ok(Self {
-            driver,
+            channel,
             original_privilege,
             platform_name,
             consumed: false,
         })
     }
 
-    /// Restore the driver to its original privilege level if needed.
+    /// Restore the channel to its original privilege level if needed.
     async fn restore_privilege(&mut self) -> Result<()> {
         if !self.original_privilege.is_empty() {
             let current = self
-                .driver
+                .channel
                 .privilege_manager()
                 .current()
                 .map(|l| l.name.clone())
                 .unwrap_or_default();
 
             if current != self.original_privilege {
-                self.driver
+                self.channel
                     .acquire_privilege(&self.original_privilege)
                     .await?;
             }
@@ -144,29 +144,31 @@ impl<'a> ConfDConfigSession<'a> {
 
 impl ConfigSession for ConfDConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
-        self.driver.send_command(cmd).await
+        self.channel.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
         debug!("{} config session: commit", self.platform_name);
-        self.consumed = true;
 
         // Commit the candidate configuration
-        self.driver.send_command("commit").await?;
+        self.channel.send_command("commit").await?;
 
         // Restore original privilege (exits config mode)
-        self.restore_privilege().await
+        self.restore_privilege().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("{} config session: abort", self.platform_name);
-        self.consumed = true;
 
         // Discard all uncommitted changes
-        self.driver.send_command("revert").await?;
+        self.channel.send_command("revert").await?;
 
         // Restore original privilege (exits config mode)
-        self.restore_privilege().await
+        self.restore_privilege().await?;
+        self.consumed = true;
+        Ok(())
     }
 
     fn detach(mut self) -> Result<()> {
@@ -180,7 +182,7 @@ impl ConfigSession for ConfDConfigSession<'_> {
 impl Diffable for ConfDConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("{} config session: diff", self.platform_name);
-        let response = self.driver.send_command("compare running-config").await?;
+        let response = self.channel.send_command("compare running-config").await?;
         Ok(response.result.to_string())
     }
 }
@@ -188,7 +190,7 @@ impl Diffable for ConfDConfigSession<'_> {
 impl Validatable for ConfDConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
         debug!("{} config session: validate", self.platform_name);
-        let response = self.driver.send_command("validate").await?;
+        let response = self.channel.send_command("validate").await?;
 
         // ConfD validate produces no output on success.
         // On failure, error messages are returned and typically trigger
@@ -249,7 +251,7 @@ impl ConfirmableCommit for ConfDConfigSession<'_> {
         }
 
         let cmd = format!("commit confirmed {}", minutes);
-        self.driver.send_command(&cmd).await?;
+        self.channel.send_command(&cmd).await?;
 
         // Does NOT consume the session — user must later commit() to confirm
         // or let it auto-rollback

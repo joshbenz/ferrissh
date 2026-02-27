@@ -20,7 +20,7 @@
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = NokiaConfigSession::new(&mut driver).await?;
+//! let mut session = NokiaConfigSession::new(driver.channel().unwrap()).await?;
 //! session.send_command("set / system name lab-router").await?;
 //!
 //! let diff = session.diff().await?;
@@ -40,18 +40,18 @@ use log::{debug, warn};
 
 use std::time::Duration;
 
+use crate::driver::channel::Channel;
 use crate::driver::config_session::{
     ConfigSession, ConfirmableCommit, Diffable, Validatable, ValidationResult,
 };
 use crate::driver::response::Response;
-use crate::driver::{Driver, GenericDriver};
 use crate::error::{DriverError, Result};
 
 use super::platform::PLATFORM_NAME;
 
 /// Nokia SR OS MD-CLI configuration session guard.
 ///
-/// Holds `&mut GenericDriver` to prevent concurrent driver use.
+/// Holds `&mut Channel` to prevent concurrent channel use.
 /// Implements [`ConfigSession`], [`Diffable`], [`Validatable`], and [`ConfirmableCommit`].
 ///
 /// Only works with MD-CLI mode. If the device is running Classic CLI,
@@ -59,11 +59,11 @@ use super::platform::PLATFORM_NAME;
 ///
 /// # Re-attach
 ///
-/// After calling [`detach()`](ConfigSession::detach), the driver remains in
+/// After calling [`detach()`](ConfigSession::detach), the channel remains in
 /// configuration mode. Call `NokiaConfigSession::new()` again to re-attach —
 /// `acquire_privilege("configuration")` is a no-op if already in config mode.
 pub struct NokiaConfigSession<'a> {
-    driver: &'a mut GenericDriver,
+    channel: &'a mut Channel,
     original_privilege: String,
     consumed: bool,
 }
@@ -74,19 +74,19 @@ impl<'a> NokiaConfigSession<'a> {
     /// Validates the platform is Nokia SR OS and that the device is running
     /// MD-CLI (not Classic CLI). Saves the current privilege level and
     /// escalates to `configuration` mode via `edit-config exclusive`.
-    pub async fn new(driver: &'a mut GenericDriver) -> Result<Self> {
+    pub async fn new(channel: &'a mut Channel) -> Result<Self> {
         // Validate platform
-        if driver.platform().name != PLATFORM_NAME {
+        if channel.platform().name != PLATFORM_NAME {
             return Err(DriverError::InvalidConfig {
                 message: format!(
                     "NokiaConfigSession requires a Nokia SR OS platform, got '{}'",
-                    driver.platform().name
+                    channel.platform().name
                 ),
             }
             .into());
         }
 
-        let original_privilege = driver
+        let original_privilege = channel
             .privilege_manager()
             .current()
             .map(|l| l.name.clone())
@@ -101,8 +101,8 @@ impl<'a> NokiaConfigSession<'a> {
             return Err(DriverError::InvalidConfig {
                 message: "NokiaConfigSession requires MD-CLI mode. \
                     The device is running Classic CLI, which has no candidate/commit model. \
-                    Use driver.acquire_privilege(\"classic_configuration\") and \
-                    driver.send_command() directly for Classic CLI configuration."
+                    Use channel.acquire_privilege(\"classic_configuration\") and \
+                    channel.send_command() directly for Classic CLI configuration."
                     .to_string(),
             }
             .into());
@@ -114,10 +114,10 @@ impl<'a> NokiaConfigSession<'a> {
         );
 
         // Enter exclusive configuration mode (no-op if already there)
-        driver.acquire_privilege("configuration").await?;
+        channel.acquire_privilege("configuration").await?;
 
         Ok(Self {
-            driver,
+            channel,
             original_privilege,
             consumed: false,
         })
@@ -126,64 +126,64 @@ impl<'a> NokiaConfigSession<'a> {
 
 impl ConfigSession for NokiaConfigSession<'_> {
     async fn send_command(&mut self, cmd: &str) -> Result<Response> {
-        self.driver.send_command(cmd).await
+        self.channel.send_command(cmd).await
     }
 
     async fn commit(mut self) -> Result<()> {
         debug!("Nokia config session: commit");
-        self.consumed = true;
 
         // Commit the candidate configuration
-        self.driver.send_command("commit").await?;
+        self.channel.send_command("commit").await?;
 
         // Exit config mode
-        self.driver.send_command("quit-config").await?;
+        self.channel.send_command("quit-config").await?;
 
         // Restore original privilege if known and different from current
         if !self.original_privilege.is_empty() {
             let current = self
-                .driver
+                .channel
                 .privilege_manager()
                 .current()
                 .map(|l| l.name.clone())
                 .unwrap_or_default();
 
             if current != self.original_privilege {
-                self.driver
+                self.channel
                     .acquire_privilege(&self.original_privilege)
                     .await?;
             }
         }
 
+        self.consumed = true;
         Ok(())
     }
 
     async fn abort(mut self) -> Result<()> {
         debug!("Nokia config session: abort");
-        self.consumed = true;
 
         // Discard all uncommitted changes (avoids quit-config confirmation prompt)
-        self.driver.send_command("discard").await?;
+        self.channel.send_command("discard").await?;
 
         // Exit config mode
-        self.driver.send_command("quit-config").await?;
+        self.channel.send_command("quit-config").await?;
 
         // Restore original privilege if known and different from current
         if !self.original_privilege.is_empty() {
             let current = self
-                .driver
+                .channel
                 .privilege_manager()
                 .current()
                 .map(|l| l.name.clone())
                 .unwrap_or_default();
 
             if current != self.original_privilege {
-                self.driver
+                self.channel
                     .acquire_privilege(&self.original_privilege)
                     .await?;
             }
         }
 
+        self.consumed = true;
         Ok(())
     }
 
@@ -198,7 +198,7 @@ impl ConfigSession for NokiaConfigSession<'_> {
 impl Diffable for NokiaConfigSession<'_> {
     async fn diff(&mut self) -> Result<String> {
         debug!("Nokia config session: diff");
-        let response = self.driver.send_command("compare").await?;
+        let response = self.channel.send_command("compare").await?;
         Ok(response.result.to_string())
     }
 }
@@ -206,7 +206,7 @@ impl Diffable for NokiaConfigSession<'_> {
 impl Validatable for NokiaConfigSession<'_> {
     async fn validate(&mut self) -> Result<ValidationResult> {
         debug!("Nokia config session: validate");
-        let response = self.driver.send_command("validate").await?;
+        let response = self.channel.send_command("validate").await?;
 
         // Nokia validate produces no output on success.
         // On failure, error messages are returned and typically trigger
@@ -264,7 +264,7 @@ impl ConfirmableCommit for NokiaConfigSession<'_> {
         }
 
         let cmd = format!("commit confirmed {}", minutes);
-        self.driver.send_command(&cmd).await?;
+        self.channel.send_command(&cmd).await?;
 
         // Does NOT consume the session — user must later commit() to confirm
         // or let it auto-rollback

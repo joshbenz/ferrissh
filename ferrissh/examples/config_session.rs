@@ -96,7 +96,7 @@ async fn demo_juniper(
     println!("--- Juniper Config Session ---\n");
 
     // Create session (enters configure mode)
-    let mut session = JuniperConfigSession::new(driver).await?;
+    let mut session = JuniperConfigSession::new(driver.channel().unwrap()).await?;
     println!("Entered configuration mode");
 
     // Check for pending changes
@@ -137,7 +137,7 @@ async fn demo_arista(
     println!("--- Arista Named Config Session ---\n");
 
     // Create a named session (isolated candidate config)
-    let mut session = AristaConfigSession::new(driver, "ferrissh-demo").await?;
+    let mut session = AristaConfigSession::new(driver.channel().unwrap(), "ferrissh-demo").await?;
     println!("Entered named config session: ferrissh-demo");
 
     // Show session diffs
@@ -162,7 +162,7 @@ async fn demo_nokia(
 
     println!("--- Nokia SR OS Config Session (MD-CLI) ---\n");
 
-    match NokiaConfigSession::new(driver).await {
+    match NokiaConfigSession::new(driver.channel().unwrap()).await {
         Ok(mut session) => {
             println!("Entered exclusive configuration mode");
 
@@ -203,7 +203,7 @@ async fn demo_arrcus(
     println!("--- Arrcus ArcOS Config Session (ConfD) ---\n");
 
     // Uses the generic ConfD config session
-    let mut session = arrcus_arcos::config_session(driver).await?;
+    let mut session = arrcus_arcos::config_session(driver.channel().unwrap()).await?;
     println!("Entered ConfD configuration mode");
 
     let diff = session.diff().await?;

@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use ferrissh::platform::vendors::nokia_sros::NokiaConfigSession;
         use ferrissh::{ConfigSession, Diffable, Validatable};
 
-        match NokiaConfigSession::new(&mut driver).await {
+        match NokiaConfigSession::new(driver.channel().unwrap()).await {
             Ok(mut session) => {
                 println!("Entered exclusive configuration mode");
 

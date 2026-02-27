@@ -17,7 +17,7 @@
 //!     .build()?;
 //! driver.open().await?;
 //!
-//! let mut session = arrcus_arcos::config_session(&mut driver).await?;
+//! let mut session = arrcus_arcos::config_session(driver.channel().unwrap()).await?;
 //! session.send_command("set system host-name lab-router").await?;
 //!
 //! let diff = session.diff().await?;
@@ -33,7 +33,7 @@
 //! # }
 //! ```
 
-use crate::driver::GenericDriver;
+use crate::driver::channel::Channel;
 use crate::error::Result;
 use crate::platform::confd::ConfDConfigSession;
 
@@ -51,8 +51,8 @@ pub type ArrcusConfigSession<'a> = ConfDConfigSession<'a>;
 /// pre-fills the platform name. Equivalent to:
 ///
 /// ```rust,ignore
-/// ConfDConfigSession::new(driver, "arrcus_arcos").await
+/// ConfDConfigSession::new(channel, "arrcus_arcos").await
 /// ```
-pub async fn config_session(driver: &mut GenericDriver) -> Result<ConfDConfigSession<'_>> {
-    ConfDConfigSession::new(driver, PLATFORM_NAME).await
+pub async fn config_session(channel: &mut Channel) -> Result<ConfDConfigSession<'_>> {
+    ConfDConfigSession::new(channel, PLATFORM_NAME).await
 }
