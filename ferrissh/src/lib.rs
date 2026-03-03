@@ -48,13 +48,15 @@ pub mod transport;
 
 // Re-export main types for convenience
 pub use driver::{
-    Channel, ChannelState, ConfigSession, ConfirmableCommit, Diffable, Driver, DriverBuilder,
-    GenericConfigSession, GenericDriver, InteractiveBuilder, InteractiveEvent, InteractiveResult,
-    NamedSession, Payload, Response, SessionState, Validatable, ValidationResult,
+    Channel, ChannelState, CommandStream, ConfigSession, ConfirmableCommit, Diffable, Driver,
+    DriverBuilder, GenericConfigSession, GenericDriver, InteractiveBuilder, InteractiveEvent,
+    InteractiveResult, NamedSession, Payload, Response, SessionState, StreamCompletion,
+    Validatable, ValidationResult,
 };
 pub use error::{DisconnectReason, Error};
 pub use platform::{
     ConfDConfigSession, ConfDJStyleConfigSession, Platform, PlatformDefinition, PrivilegeLevel,
+    StreamProcessor,
 };
 pub use session::{Session, SessionBuilder};
 pub use transport::HostKeyVerification;

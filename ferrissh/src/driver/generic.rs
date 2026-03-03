@@ -17,6 +17,7 @@ use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
+use super::stream::CommandStream;
 use crate::error::{DisconnectReason, DriverError, Result};
 use crate::platform::PlatformDefinition;
 use crate::session::Session;
@@ -267,6 +268,11 @@ impl Driver for GenericDriver {
     async fn send_command(&mut self, command: &str) -> Result<Response> {
         let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
         channel.send_command(command).await
+    }
+
+    async fn send_command_stream<'a>(&'a mut self, command: &str) -> Result<CommandStream<'a>> {
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+        channel.send_command_stream(command).await
     }
 
     async fn acquire_privilege(&mut self, target: &str) -> Result<()> {

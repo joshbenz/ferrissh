@@ -101,6 +101,40 @@ impl PtyChannel {
         }
     }
 
+    /// Read one batch of SSH data without waiting for a prompt pattern.
+    ///
+    /// Returns ANSI-stripped data after receiving the first `Data` message.
+    /// Accumulates `ExtendedData` (stderr) but keeps waiting for stdout.
+    /// This is the low-level primitive used by [`CommandStream`](crate::driver::stream::CommandStream).
+    pub async fn read_chunk(&mut self, timeout: Duration) -> Result<BytesMut> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ChannelError::PatternTimeout(timeout).into());
+                }
+                msg = self.channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            self.buffer.extend(&data);
+                            return Ok(self.buffer.take());
+                        }
+                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                            self.buffer.extend(&data);
+                        }
+                        Some(ChannelMsg::Eof) => {
+                            return Err(ChannelError::Eof.into());
+                        }
+                        None => {
+                            return Err(ChannelError::Disconnected.into());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     /// Get current buffer contents without clearing.
     pub fn peek_buffer(&self) -> &[u8] {
         self.buffer.as_slice()

@@ -21,6 +21,7 @@ use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::payload::Payload;
 use super::privilege::PrivilegeManager;
 use super::response::Response;
+use super::stream::{CommandStream, StreamConfig};
 use crate::channel::PtyChannel;
 use crate::error::{ChannelError, DisconnectReason, DriverError, Error, Result, TransportError};
 use crate::platform::PlatformDefinition;
@@ -214,6 +215,47 @@ impl Channel {
             responses.push(self.send_command(cmd).await?);
         }
         Ok(responses)
+    }
+
+    /// Send a command and return a streaming iterator over output chunks.
+    ///
+    /// Unlike [`send_command()`](Self::send_command), this returns a
+    /// [`CommandStream`] that yields normalized output incrementally as it
+    /// arrives from the device. Useful for large outputs where callers want
+    /// to process data before the entire response is received.
+    ///
+    /// The returned `CommandStream` borrows `&mut self`, preventing concurrent
+    /// channel use until the stream is dropped.
+    pub async fn send_command_stream(&mut self, command: &str) -> Result<CommandStream<'_>> {
+        self.check_ready()?;
+        debug!("send_command_stream: {:?}", command);
+
+        let start = Instant::now();
+
+        // Send the command
+        let send_result = self.pty.send(command).await;
+        if let Err(e) = send_result {
+            if Self::is_connection_error(&e) {
+                self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+            }
+            return Err(e);
+        }
+
+        let config = StreamConfig {
+            prompt_pattern: self.prompt_pattern.clone(),
+            search_depth: self.pty.search_depth(),
+            timeout: self.timeout,
+            normalize: self.normalize,
+            processor: self
+                .session
+                .platform()
+                .behavior
+                .as_ref()
+                .and_then(|b| b.stream_processor()),
+            failed_when_contains: self.session.platform().failed_when_contains.clone(),
+        };
+
+        Ok(CommandStream::new(self, command, config, start))
     }
 
     /// Acquire a specific privilege level.
@@ -578,6 +620,30 @@ impl Channel {
     // =========================================================================
     // Internal methods
     // =========================================================================
+
+    /// Get a mutable reference to the PTY channel.
+    ///
+    /// Used by [`CommandStream`] to call `read_chunk()`.
+    pub(crate) fn pty(&mut self) -> &mut PtyChannel {
+        &mut self.pty
+    }
+
+    /// Update the current privilege level from a prompt string.
+    ///
+    /// Used by [`CommandStream`] when it detects the final prompt.
+    pub(crate) fn update_privilege_from_prompt(&mut self, prompt: &str) {
+        if let Ok(level) = self.privilege_manager.determine_from_prompt(prompt) {
+            let level_name = level.name.clone();
+            let _ = self.privilege_manager.set_current(&level_name);
+        }
+    }
+
+    /// Record that a command completed successfully.
+    ///
+    /// Used by [`CommandStream`] when the stream finishes.
+    pub(crate) fn mark_command_complete(&mut self) {
+        self.last_command_at = Some(Instant::now());
+    }
 
     /// Check that the channel is in `Ready` state.
     fn check_ready(&mut self) -> Result<()> {

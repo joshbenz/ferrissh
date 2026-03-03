@@ -47,7 +47,7 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 
-use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
+use crate::platform::{PlatformDefinition, PrivilegeLevel, StreamProcessor, VendorBehavior};
 
 /// Platform name for Juniper JUNOS.
 pub const PLATFORM_NAME: &str = "juniper_junos";
@@ -115,7 +115,19 @@ pub fn platform() -> PlatformDefinition {
 /// Juniper JUNOS-specific behavior.
 pub struct JuniperBehavior;
 
+struct JuniperStreamProcessor;
+
+impl StreamProcessor for JuniperStreamProcessor {
+    fn process_lines(&mut self, buf: &mut BytesMut) {
+        JuniperBehavior.post_process_output(buf);
+    }
+}
+
 impl VendorBehavior for JuniperBehavior {
+    fn stream_processor(&self) -> Option<Box<dyn StreamProcessor>> {
+        Some(Box::new(JuniperStreamProcessor))
+    }
+
     fn post_process_output(&self, buf: &mut BytesMut) {
         // Filter out [edit] context lines that JUNOS includes in config mode.
         // In-place compaction: scan for lines starting with "[edit", skip them.
