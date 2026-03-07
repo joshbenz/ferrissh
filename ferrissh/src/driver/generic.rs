@@ -5,10 +5,10 @@
 //! For multi-channel use, call [`open_channel()`](GenericDriver::open_channel)
 //! or access the underlying [`Session`] directly.
 
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use log::{debug, warn};
-use tokio::sync::watch;
 
 use super::Driver;
 use super::SessionState;
@@ -17,6 +17,7 @@ use super::config_session::GenericConfigSession;
 use super::interactive::{InteractiveEvent, InteractiveResult};
 use super::privilege::PrivilegeManager;
 use super::response::Response;
+use super::stream::CommandStream;
 use crate::error::{DisconnectReason, DriverError, Result};
 use crate::platform::PlatformDefinition;
 use crate::session::Session;
@@ -127,11 +128,22 @@ impl GenericDriver {
         self.channel.as_ref().and_then(|c| c.last_command_at())
     }
 
-    /// Get a clonable disconnect receiver for use in `tokio::select!`.
+    /// Returns a future that resolves when the session disconnects.
     ///
-    /// Returns `None` if the driver is not connected.
-    pub fn disconnect_receiver(&self) -> Option<watch::Receiver<Option<DisconnectReason>>> {
-        self.session.as_ref().map(|s| s.disconnect_receiver())
+    /// The returned future is `'static` and `Send`, so it can be used directly
+    /// in `tokio::select!` without borrowing the driver — leaving `&mut self`
+    /// free for concurrent command methods.
+    ///
+    /// If the driver is not connected, resolves immediately with
+    /// [`DisconnectReason::Closed`].
+    pub fn disconnected(&self) -> impl Future<Output = DisconnectReason> + Send + 'static {
+        let session = self.session.clone();
+        async move {
+            match session {
+                Some(s) => s.disconnected().await,
+                None => DisconnectReason::Closed,
+            }
+        }
     }
 
     /// Get a reference to the underlying session.
@@ -256,6 +268,11 @@ impl Driver for GenericDriver {
     async fn send_command(&mut self, command: &str) -> Result<Response> {
         let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
         channel.send_command(command).await
+    }
+
+    async fn send_command_stream<'a>(&'a mut self, command: &str) -> Result<CommandStream<'a>> {
+        let channel = self.channel.as_mut().ok_or(DriverError::NotConnected)?;
+        channel.send_command_stream(command).await
     }
 
     async fn acquire_privilege(&mut self, target: &str) -> Result<()> {

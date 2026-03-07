@@ -7,12 +7,16 @@
 
 use bytes::BytesMut;
 use regex::bytes::Regex;
+use vte::{Parser, Perform};
 
 /// Buffer for accumulating output and efficiently searching for patterns.
 ///
 /// Uses scrapli's optimization of only searching the tail of the buffer
 /// for prompt patterns, making it efficient for large command outputs.
-#[derive(Debug)]
+///
+/// Holds a reusable [`vte::Parser`] so ANSI escape stripping does not
+/// allocate on every call and correctly handles sequences split across
+/// SSH data messages.
 pub struct PatternBuffer {
     /// The accumulated output buffer.
     buffer: BytesMut,
@@ -20,6 +24,38 @@ pub struct PatternBuffer {
     /// How many bytes from the end to search for patterns.
     /// Default is 1000 bytes.
     search_depth: usize,
+
+    /// Reusable VTE parser for ANSI escape stripping.
+    parser: Parser,
+}
+
+impl std::fmt::Debug for PatternBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PatternBuffer")
+            .field("buffer", &self.buffer)
+            .field("search_depth", &self.search_depth)
+            .finish_non_exhaustive()
+    }
+}
+
+/// VTE `Perform` implementation that writes printable characters and `\n`
+/// directly into a `BytesMut`, matching `strip-ansi-escapes` behaviour.
+struct AnsiStripper<'a> {
+    out: &'a mut BytesMut,
+}
+
+impl Perform for AnsiStripper<'_> {
+    fn print(&mut self, c: char) {
+        let mut buf = [0u8; 4];
+        self.out
+            .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+
+    fn execute(&mut self, byte: u8) {
+        if byte == b'\n' {
+            self.out.extend_from_slice(b"\n");
+        }
+    }
 }
 
 impl PatternBuffer {
@@ -33,14 +69,19 @@ impl PatternBuffer {
         Self {
             buffer: BytesMut::with_capacity(4096),
             search_depth,
+            parser: Parser::new(),
         }
     }
 
     /// Extend the buffer with new data, stripping ANSI escape codes.
+    ///
+    /// The VTE parser is reused across calls, so escape sequences that
+    /// span multiple SSH data messages are handled correctly.
     pub fn extend(&mut self, data: &[u8]) {
-        // Strip ANSI escape codes using the vte-based crate
-        let cleaned = strip_ansi_escapes::strip(data);
-        self.buffer.extend_from_slice(&cleaned);
+        let mut stripper = AnsiStripper {
+            out: &mut self.buffer,
+        };
+        self.parser.advance(&mut stripper, data);
     }
 
     /// Search only the tail of the buffer for the pattern.
@@ -109,7 +150,6 @@ impl Default for PatternBuffer {
         Self::new(1000)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

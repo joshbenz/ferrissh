@@ -57,6 +57,18 @@ impl From<Platform> for PlatformDefinition {
     }
 }
 
+/// Stateful per-stream processor for vendor-specific line filtering.
+///
+/// Created once per [`CommandStream`](crate::driver::stream::CommandStream)
+/// via [`VendorBehavior::stream_processor()`].
+pub trait StreamProcessor: Send {
+    /// Process lines in the buffer in place.
+    ///
+    /// Intermediate lines end with `\n`. The final line may be
+    /// unterminated after prompt/newline stripping.
+    fn process_lines(&mut self, buf: &mut bytes::BytesMut);
+}
+
 /// Trait for vendor-specific output post-processing.
 ///
 /// Most vendor differences are handled by `PlatformDefinition` data fields
@@ -73,4 +85,11 @@ pub trait VendorBehavior: Send + Sync {
     ///
     /// The default implementation is a no-op.
     fn post_process_output(&self, _buf: &mut bytes::BytesMut) {}
+
+    /// Create a per-stream processor for incremental output filtering.
+    ///
+    /// Returns `None` by default (no streaming post-processing needed).
+    fn stream_processor(&self) -> Option<Box<dyn StreamProcessor>> {
+        None
+    }
 }

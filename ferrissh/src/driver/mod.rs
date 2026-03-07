@@ -11,6 +11,7 @@ mod interactive;
 pub mod payload;
 mod privilege;
 pub(crate) mod response;
+pub mod stream;
 
 pub use builder::DriverBuilder;
 pub use channel::{Channel, ChannelState};
@@ -24,6 +25,7 @@ pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, I
 pub use payload::Payload;
 pub use privilege::PrivilegeManager;
 pub use response::Response;
+pub use stream::{CommandStream, StreamCompletion};
 
 use std::future::Future;
 
@@ -59,6 +61,15 @@ pub trait Driver: Send + Sync {
 
     /// Send a command and wait for the prompt.
     fn send_command(&mut self, command: &str) -> impl Future<Output = Result<Response>> + Send;
+
+    /// Send a command and return a streaming iterator over output chunks.
+    ///
+    /// Unlike [`send_command()`](Self::send_command), this returns a
+    /// [`CommandStream`] that yields normalized output incrementally.
+    fn send_command_stream<'a>(
+        &'a mut self,
+        command: &str,
+    ) -> impl Future<Output = Result<CommandStream<'a>>> + Send;
 
     /// Send multiple commands sequentially.
     fn send_commands(

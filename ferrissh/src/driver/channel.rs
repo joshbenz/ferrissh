@@ -21,6 +21,7 @@ use super::interactive::{InteractiveEvent, InteractiveResult, InteractiveStep};
 use super::payload::Payload;
 use super::privilege::PrivilegeManager;
 use super::response::Response;
+use super::stream::{CommandStream, StreamConfig};
 use crate::channel::PtyChannel;
 use crate::error::{ChannelError, DisconnectReason, DriverError, Error, Result, TransportError};
 use crate::platform::PlatformDefinition;
@@ -77,6 +78,9 @@ pub struct Channel {
     /// When the last command completed successfully.
     last_command_at: Option<Instant>,
 
+    /// True while a `CommandStream` is active and hasn't been drained.
+    stream_dirty: bool,
+
     /// Password for privilege escalation (extracted from auth config).
     auth_password: Option<SecretString>,
 }
@@ -104,6 +108,7 @@ impl Channel {
             state: ChannelState::Ready,
             disconnect_rx,
             last_command_at: None,
+            stream_dirty: false,
             auth_password,
         }
     }
@@ -214,6 +219,56 @@ impl Channel {
             responses.push(self.send_command(cmd).await?);
         }
         Ok(responses)
+    }
+
+    /// Send a command and return a streaming iterator over output chunks.
+    ///
+    /// Unlike [`send_command()`](Self::send_command), this returns a
+    /// [`CommandStream`] that yields normalized output incrementally as it
+    /// arrives from the device. Useful for large outputs where callers want
+    /// to process data before the entire response is received.
+    ///
+    /// The returned `CommandStream` borrows `&mut self`, preventing concurrent
+    /// channel use until the stream is dropped.
+    ///
+    /// # Important
+    ///
+    /// Callers **must** drive the stream to completion (until
+    /// [`next_chunk()`](CommandStream::next_chunk) returns `Ok(None)`) before
+    /// issuing further commands. Dropping the stream before the prompt is
+    /// detected leaves unread data on the channel and will cause subsequent
+    /// commands to fail with [`DriverError::StreamNotDrained`].
+    pub async fn send_command_stream(&mut self, command: &str) -> Result<CommandStream<'_>> {
+        self.check_ready()?;
+        debug!("send_command_stream: {:?}", command);
+
+        let start = Instant::now();
+
+        // Send the command
+        let send_result = self.pty.send(command).await;
+        if let Err(e) = send_result {
+            if Self::is_connection_error(&e) {
+                self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+            }
+            return Err(e);
+        }
+
+        let config = StreamConfig {
+            prompt_pattern: self.prompt_pattern.clone(),
+            search_depth: self.pty.search_depth(),
+            timeout: self.timeout,
+            normalize: self.normalize,
+            processor: self
+                .session
+                .platform()
+                .behavior
+                .as_ref()
+                .and_then(|b| b.stream_processor()),
+            failed_when_contains: self.session.platform().failed_when_contains.clone(),
+        };
+
+        self.stream_dirty = true;
+        Ok(CommandStream::new(self, command, config, start))
     }
 
     /// Acquire a specific privilege level.
@@ -579,10 +634,50 @@ impl Channel {
     // Internal methods
     // =========================================================================
 
+    /// Get a mutable reference to the PTY channel.
+    ///
+    /// Used by [`CommandStream`] to call `read_chunk()`.
+    pub(crate) fn pty(&mut self) -> &mut PtyChannel {
+        &mut self.pty
+    }
+
+    /// Update the current privilege level from a prompt string.
+    ///
+    /// Used by [`CommandStream`] when it detects the final prompt.
+    pub(crate) fn update_privilege_from_prompt(&mut self, prompt: &str) {
+        if let Ok(level) = self.privilege_manager.determine_from_prompt(prompt) {
+            let level_name = level.name.clone();
+            let _ = self.privilege_manager.set_current(&level_name);
+        }
+    }
+
+    /// Record that a command completed successfully.
+    ///
+    /// Used by [`CommandStream`] when the stream finishes.
+    pub(crate) fn mark_command_complete(&mut self) {
+        self.last_command_at = Some(Instant::now());
+        self.stream_dirty = false;
+    }
+
+    /// If `e` indicates a dead connection, transition to `Dead` state and
+    /// signal the disconnect watch.
+    ///
+    /// Used by [`CommandStream`] to mirror the error handling in
+    /// [`send_command()`](Self::send_command).
+    pub(crate) fn handle_error(&mut self, e: &Error) {
+        if Self::is_connection_error(e) {
+            self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+        }
+    }
+
     /// Check that the channel is in `Ready` state.
     fn check_ready(&mut self) -> Result<()> {
         if self.state != ChannelState::Ready {
             return Err(DriverError::NotConnected.into());
+        }
+
+        if self.stream_dirty {
+            return Err(DriverError::StreamNotDrained.into());
         }
 
         // Non-blocking check for async disconnect

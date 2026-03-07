@@ -168,9 +168,26 @@ impl Session {
         &self.inner.prompt_pattern
     }
 
-    /// Get a clonable disconnect receiver.
-    pub fn disconnect_receiver(&self) -> watch::Receiver<Option<DisconnectReason>> {
-        self.inner.disconnect_rx.clone()
+    /// Wait until the session disconnects and return the reason.
+    ///
+    /// If already disconnected, returns immediately. If the watch channel
+    /// is dropped without a reason, returns [`DisconnectReason::Closed`].
+    ///
+    /// `Session` is `Clone` (Arc-based), so callers can clone and move
+    /// into a `tokio::spawn` or `tokio::select!` branch.
+    pub async fn disconnected(&self) -> DisconnectReason {
+        let mut rx = self.inner.disconnect_rx.clone();
+        if let Some(reason) = rx.borrow_and_update().clone() {
+            return reason;
+        }
+        loop {
+            if rx.changed().await.is_err() {
+                return DisconnectReason::Closed;
+            }
+            if let Some(reason) = rx.borrow_and_update().clone() {
+                return reason;
+            }
+        }
     }
 
     /// Get the disconnect sender.

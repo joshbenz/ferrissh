@@ -21,6 +21,7 @@ Ferrissh provides a high-level async API for interacting with network devices ov
 - **Configuration Mode** - Automatic privilege escalation for config commands
 - **Credential Protection** - Passwords and passphrases wrapped in `SecretString` (via `secrecy`), redacted from Debug output
 - **Multi-Channel** - Multiple independent PTY shells on a single SSH connection via `Session` + `Channel`
+- **Streaming Output** - `send_command_stream()` yields normalized output chunks as they arrive, with `futures::Stream` adapter. Ideal for large outputs (BGP tables, full configs)
 - **Zero-Copy Responses** - `Payload` type backed by reference-counted `Bytes` with in-place buffer normalization. Cheap clones.
 - **Pattern Matching** - Efficient tail-search buffer matching (scrapli-style optimization)
 - **Data-Driven Platforms** - Platforms are pure data (prompts, privilege graphs, failure patterns) with optional extension traits for configuration sessions
@@ -31,7 +32,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferrissh = "0.3"
+ferrissh = "0.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -123,6 +124,37 @@ for response in responses {
 }
 
 driver.close().await?;
+```
+
+### Streaming Output
+
+Process large outputs incrementally instead of buffering the entire response:
+
+```rust
+use ferrissh::Driver;
+
+// Stream a large routing table
+let mut stream = driver.send_command_stream("show route").await?;
+while let Some(chunk) = stream.next_chunk().await? {
+    print!("{}", String::from_utf8_lossy(&chunk));
+}
+
+// Completion metadata (prompt, elapsed time, failure patterns)
+let completion = stream.completion().unwrap();
+println!("Completed in {:?}", completion.elapsed);
+```
+
+Or use the `futures::Stream` adapter with `StreamExt`:
+
+```rust
+use futures_util::StreamExt;
+
+let stream = driver.send_command_stream("show running-config").await?;
+let mut pinned = Box::pin(stream.into_stream());
+while let Some(chunk) = pinned.next().await {
+    let bytes = chunk?;
+    process_chunk(&bytes);
+}
 ```
 
 ### SSH Key Authentication
@@ -583,7 +615,7 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
 ### API
 
-- [ ] Streaming output API
+- [x] Streaming output API (`send_command_stream()`, `futures::Stream` adapter)
 
 ## Dependencies
 
@@ -600,7 +632,8 @@ Log levels: `error`, `warn`, `info`, `debug`, `trace`
 | `secrecy` | Credential protection (`SecretString` with zeroize) |
 | `serde` | Serialization/deserialization |
 | `indexmap` | Deterministic-order maps |
-| `strip-ansi-escapes` | ANSI escape code removal |
+| `vte` | ANSI escape sequence stripping (reusable parser, zero-alloc) |
+| `futures-core` / `futures-util` | `Stream` trait and adapters for streaming API |
 
 
 ## License
