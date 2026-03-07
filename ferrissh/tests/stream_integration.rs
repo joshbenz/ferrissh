@@ -1,12 +1,7 @@
 //! Integration tests for the streaming command API.
 //!
-//! These tests connect to **localhost** via SSH using key-based authentication.
-//!
-//! # Prerequisites
-//!
-//! - SSH server running on localhost (port 22)
-//! - Current user's key authorized for passwordless login
-//!   (`~/.ssh/id_ed25519.pub` in `~/.ssh/authorized_keys`)
+//! Uses an in-process mock SSH server (see `common/mod.rs`) so no
+//! external SSH infrastructure or keys are required.
 //!
 //! # Running
 //!
@@ -14,7 +9,8 @@
 //! cargo test --test stream_integration
 //! ```
 
-use std::path::PathBuf;
+mod common;
+
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -22,38 +18,25 @@ use futures_util::StreamExt;
 
 use ferrissh::{Driver, DriverBuilder, Platform};
 
-/// Helper: build a driver connected to localhost.
-///
-/// Retries up to 3 times to handle transient SSH connection resets
-/// (e.g., when sshd's MaxStartups limit is hit by parallel tests).
+/// Helper: build a driver connected to the mock SSH server.
 async fn localhost_driver() -> ferrissh::GenericDriver {
-    let user = std::env::var("USER").expect("USER env var must be set");
-    let key_path = PathBuf::from(format!("/home/{}/.ssh/id_ed25519", user));
+    let port = common::mock_server_port().await;
 
-    for attempt in 0..3 {
-        let mut driver = DriverBuilder::new("localhost")
-            .port(22)
-            .username(&user)
-            .private_key(&key_path)
-            .platform(Platform::Linux)
-            .timeout(Duration::from_secs(10))
-            .danger_disable_host_key_verification()
-            .build()
-            .expect("driver build should succeed");
+    let mut driver = DriverBuilder::new("127.0.0.1")
+        .port(port)
+        .username("test")
+        .password("test")
+        .platform(Platform::Linux)
+        .timeout(Duration::from_secs(10))
+        .danger_disable_host_key_verification()
+        .build()
+        .expect("driver build should succeed");
 
-        match driver.open().await {
-            Ok(()) => return driver,
-            Err(e) if attempt < 2 => {
-                eprintln!(
-                    "SSH connect attempt {} failed: {e}, retrying...",
-                    attempt + 1
-                );
-                tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1))).await;
-            }
-            Err(e) => panic!("SSH connection failed after 3 attempts: {e}"),
-        }
-    }
-    unreachable!()
+    driver
+        .open()
+        .await
+        .expect("mock SSH connection should succeed");
+    driver
 }
 
 // =============================================================================
