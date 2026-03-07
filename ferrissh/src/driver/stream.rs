@@ -244,7 +244,7 @@ impl<'a> CommandStream<'a> {
         }
     }
 
-    /// Convert this stream into a [`futures::Stream`].
+    /// Convert this stream into a [`Stream`].
     ///
     /// Note: this consumes `self`, so [`completion()`](Self::completion)
     /// is not accessible afterward. Use the [`next_chunk()`](Self::next_chunk)
