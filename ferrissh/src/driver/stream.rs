@@ -140,7 +140,15 @@ impl<'a> CommandStream<'a> {
 
         loop {
             // 1. Read ANSI-stripped data from PTY
-            let raw = self.channel.pty().read_chunk(self.timeout).await?;
+            let raw = match self.channel.pty().read_chunk(self.timeout).await {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    self.done = true;
+                    self.channel.handle_error(&err);
+                    self.channel.mark_command_complete();
+                    return Err(err);
+                }
+            };
             self.holdback.extend_from_slice(&raw);
 
             // 2. Strip echo on first data (handles \r before \n in raw data).

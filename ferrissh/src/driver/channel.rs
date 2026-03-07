@@ -645,6 +645,17 @@ impl Channel {
         self.last_command_at = Some(Instant::now());
     }
 
+    /// If `e` indicates a dead connection, transition to `Dead` state and
+    /// signal the disconnect watch.
+    ///
+    /// Used by [`CommandStream`] to mirror the error handling in
+    /// [`send_command()`](Self::send_command).
+    pub(crate) fn handle_error(&mut self, e: &Error) {
+        if Self::is_connection_error(e) {
+            self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
+        }
+    }
+
     /// Check that the channel is in `Ready` state.
     fn check_ready(&mut self) -> Result<()> {
         if self.state != ChannelState::Ready {
