@@ -140,6 +140,12 @@ pub enum DriverError {
     /// No path found between privilege levels
     #[error("No path from privilege '{from}' to '{to}'")]
     NoPrivilegePath { from: String, to: String },
+
+    /// A `CommandStream` was dropped without being drained to completion.
+    #[error(
+        "Channel has unread stream data — previous CommandStream was dropped before the prompt was detected"
+    )]
+    StreamNotDrained,
 }
 
 /// Platform/vendor definition errors.

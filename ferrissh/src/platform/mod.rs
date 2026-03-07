@@ -62,9 +62,10 @@ impl From<Platform> for PlatformDefinition {
 /// Created once per [`CommandStream`](crate::driver::stream::CommandStream)
 /// via [`VendorBehavior::stream_processor()`].
 pub trait StreamProcessor: Send {
-    /// Process complete lines in the buffer in place.
+    /// Process lines in the buffer in place.
     ///
-    /// `buf` contains only complete lines (each ending with `\n`).
+    /// Intermediate lines end with `\n`. The final line may be
+    /// unterminated after prompt/newline stripping.
     fn process_lines(&mut self, buf: &mut bytes::BytesMut);
 }
 

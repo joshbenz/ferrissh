@@ -279,6 +279,17 @@ impl<'a> CommandStream<'a> {
         self.done
     }
 
+    /// Drain the stream to completion, discarding remaining output.
+    ///
+    /// Use this to abandon processing while keeping the channel usable
+    /// for subsequent commands. Without calling this (or draining via
+    /// [`next_chunk()`](Self::next_chunk)), the channel will reject
+    /// further commands with [`DriverError::StreamNotDrained`](crate::error::DriverError::StreamNotDrained).
+    pub async fn cancel(&mut self) -> Result<()> {
+        while self.next_chunk().await?.is_some() {}
+        Ok(())
+    }
+
     /// Check failure patterns against a chunk, prepending the overlap tail
     /// to catch patterns that span chunk boundaries.
     fn check_failure_patterns(&self, chunk: &[u8]) -> Option<String> {
@@ -316,7 +327,6 @@ impl<'a> CommandStream<'a> {
         self.overlap_tail.extend_from_slice(&emitted[start..]);
     }
 }
-
 /// Strip command echo from un-normalized data (handles `\r` before `\n`).
 fn strip_echo_streaming(buf: &mut BytesMut, command: &str) {
     if let Some(nl_pos) = memchr::memchr(b'\n', buf) {

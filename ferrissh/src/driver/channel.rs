@@ -78,6 +78,9 @@ pub struct Channel {
     /// When the last command completed successfully.
     last_command_at: Option<Instant>,
 
+    /// True while a `CommandStream` is active and hasn't been drained.
+    stream_dirty: bool,
+
     /// Password for privilege escalation (extracted from auth config).
     auth_password: Option<SecretString>,
 }
@@ -105,6 +108,7 @@ impl Channel {
             state: ChannelState::Ready,
             disconnect_rx,
             last_command_at: None,
+            stream_dirty: false,
             auth_password,
         }
     }
@@ -226,6 +230,14 @@ impl Channel {
     ///
     /// The returned `CommandStream` borrows `&mut self`, preventing concurrent
     /// channel use until the stream is dropped.
+    ///
+    /// # Important
+    ///
+    /// Callers **must** drive the stream to completion (until
+    /// [`next_chunk()`](CommandStream::next_chunk) returns `Ok(None)`) before
+    /// issuing further commands. Dropping the stream before the prompt is
+    /// detected leaves unread data on the channel and will cause subsequent
+    /// commands to fail with [`DriverError::StreamNotDrained`].
     pub async fn send_command_stream(&mut self, command: &str) -> Result<CommandStream<'_>> {
         self.check_ready()?;
         debug!("send_command_stream: {:?}", command);
@@ -255,6 +267,7 @@ impl Channel {
             failed_when_contains: self.session.platform().failed_when_contains.clone(),
         };
 
+        self.stream_dirty = true;
         Ok(CommandStream::new(self, command, config, start))
     }
 
@@ -643,6 +656,7 @@ impl Channel {
     /// Used by [`CommandStream`] when the stream finishes.
     pub(crate) fn mark_command_complete(&mut self) {
         self.last_command_at = Some(Instant::now());
+        self.stream_dirty = false;
     }
 
     /// If `e` indicates a dead connection, transition to `Dead` state and
@@ -660,6 +674,10 @@ impl Channel {
     fn check_ready(&mut self) -> Result<()> {
         if self.state != ChannelState::Ready {
             return Err(DriverError::NotConnected.into());
+        }
+
+        if self.stream_dirty {
+            return Err(DriverError::StreamNotDrained.into());
         }
 
         // Non-blocking check for async disconnect
