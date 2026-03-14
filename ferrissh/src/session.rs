@@ -285,6 +285,9 @@ pub struct SessionBuilder {
     keepalive_interval: Option<Option<Duration>>,
     keepalive_max: Option<usize>,
     inactivity_timeout: Option<Option<Duration>>,
+    window_size: Option<u32>,
+    maximum_packet_size: Option<u32>,
+    channel_buffer_size: Option<usize>,
 }
 
 impl SessionBuilder {
@@ -304,6 +307,9 @@ impl SessionBuilder {
             keepalive_interval: None,
             keepalive_max: None,
             inactivity_timeout: None,
+            window_size: None,
+            maximum_packet_size: None,
+            channel_buffer_size: None,
         }
     }
 
@@ -402,6 +408,29 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the SSH channel window size in bytes (default: 2 MiB).
+    ///
+    /// Controls how much data can be in-flight per channel before SSH
+    /// flow control kicks in. Lower values reduce per-channel memory
+    /// usage, which matters when connecting to many devices concurrently.
+    pub fn window_size(mut self, size: u32) -> Self {
+        self.window_size = Some(size);
+        self
+    }
+
+    /// Set the maximum SSH packet size in bytes (default: 32 KiB).
+    pub fn maximum_packet_size(mut self, size: u32) -> Self {
+        self.maximum_packet_size = Some(size);
+        self
+    }
+
+    /// Set the number of unprocessed messages buffered per channel
+    /// before backpressure is applied (default: 100).
+    pub fn channel_buffer_size(mut self, size: usize) -> Self {
+        self.channel_buffer_size = Some(size);
+        self
+    }
+
     /// Connect to the SSH server and authenticate.
     ///
     /// Returns a [`Session`] representing the authenticated connection.
@@ -455,6 +484,9 @@ impl SessionBuilder {
                 .unwrap_or(Some(Duration::from_secs(30))),
             keepalive_max: self.keepalive_max.unwrap_or(3),
             inactivity_timeout: self.inactivity_timeout.unwrap_or(None),
+            window_size: self.window_size.unwrap_or(2_097_152),
+            maximum_packet_size: self.maximum_packet_size.unwrap_or(32_768),
+            channel_buffer_size: self.channel_buffer_size.unwrap_or(100),
         };
 
         debug!(

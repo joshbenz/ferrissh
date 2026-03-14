@@ -38,6 +38,9 @@ impl SshTransport {
             inactivity_timeout: config.inactivity_timeout,
             keepalive_interval: config.keepalive_interval,
             keepalive_max: config.keepalive_max,
+            window_size: config.window_size,
+            maximum_packet_size: config.maximum_packet_size,
+            channel_buffer_size: config.channel_buffer_size,
             ..Default::default()
         });
 

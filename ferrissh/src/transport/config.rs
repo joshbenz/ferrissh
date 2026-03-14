@@ -76,6 +76,21 @@ pub struct SshConfig {
     /// individual commands wait for a prompt). Most users should leave this
     /// at `None` and rely on keepalive for connection health.
     pub inactivity_timeout: Option<Duration>,
+
+    /// SSH channel window size in bytes (default: 2 MiB).
+    ///
+    /// Controls how much data can be in-flight per channel before SSH
+    /// flow control kicks in. Lower values reduce per-channel memory
+    /// usage, which matters when connecting to many devices concurrently.
+    pub window_size: u32,
+
+    /// Maximum SSH packet size in bytes (default: 32 KiB).
+    pub maximum_packet_size: u32,
+
+    /// Number of unprocessed messages buffered per channel (default: 100).
+    ///
+    /// Once this limit is reached, backpressure is applied to the sender.
+    pub channel_buffer_size: usize,
 }
 
 impl SshConfig {
@@ -168,6 +183,9 @@ mod tests {
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_max: 3,
             inactivity_timeout: None,
+            window_size: 2_097_152,
+            maximum_packet_size: 32_768,
+            channel_buffer_size: 100,
         };
         let debug_output = format!("{:?}", config);
         assert!(!debug_output.contains("secret_password"));
