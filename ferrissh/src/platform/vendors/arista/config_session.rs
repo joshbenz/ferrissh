@@ -131,7 +131,7 @@ impl<'a> AristaConfigSession<'a> {
             let first6: String = session_name.chars().take(6).collect();
             let escaped = regex::escape(&first6);
             let pattern = format!(
-                r"(?mi)^[\w.\-@()/: ]{{1,63}}\(config\-s\-{}[\w.\-@/:+]{{0,64}}\)#\s?$",
+                r"(?m)(?-u)^[\w.\-@()/: ]+\(config\-s\-{}[\w.\-@/:+]*\)#\s?$",
                 escaped
             );
 
@@ -295,7 +295,7 @@ mod tests {
         let first6: String = session_name.chars().take(6).collect();
         let escaped = regex::escape(&first6);
         let pattern = format!(
-            r"(?mi)^[\w.\-@()/: ]{{1,63}}\(config\-s\-{}[\w.\-@/:+]{{0,64}}\)#\s?$",
+            r"(?m)(?-u)^[\w.\-@()/: ]+\(config\-s\-{}[\w.\-@/:+]*\)#\s?$",
             escaped
         );
 
@@ -320,7 +320,7 @@ mod tests {
         let first6: String = session_name.chars().take(6).collect();
         let escaped = regex::escape(&first6);
         let pattern = format!(
-            r"(?mi)^[\w.\-@()/: ]{{1,63}}\(config\-s\-{}[\w.\-@/:+]{{0,64}}\)#\s?$",
+            r"(?m)(?-u)^[\w.\-@()/: ]+\(config\-s\-{}[\w.\-@/:+]*\)#\s?$",
             escaped
         );
 
@@ -337,7 +337,7 @@ mod tests {
         let first6: String = session_name.chars().take(6).collect();
         let escaped = regex::escape(&first6);
         let pattern = format!(
-            r"(?mi)^[\w.\-@()/: ]{{1,63}}\(config\-s\-{}[\w.\-@/:+]{{0,64}}\)#\s?$",
+            r"(?m)(?-u)^[\w.\-@()/: ]+\(config\-s\-{}[\w.\-@/:+]*\)#\s?$",
             escaped
         );
 

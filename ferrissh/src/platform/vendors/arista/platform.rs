@@ -34,19 +34,19 @@ pub const PLATFORM_NAME: &str = "arista_eos";
 /// Create the Arista EOS platform definition.
 ///
 /// Prompt patterns adapted from scrapli's EOS driver.
-/// Uses `(?mi)` flags for multiline (^ matches line start) and case-insensitive matching.
+/// Uses `(?m)` flag for multiline (^ matches line start).
 pub fn platform() -> PlatformDefinition {
     // Exec mode - ">" prompt
-    let exec = PrivilegeLevel::new("exec", r"(?mi)^[\w.\-@()/: ]{1,63}>\s?$").unwrap();
+    let exec = PrivilegeLevel::new("exec", r"(?m)(?-u)^[\w.\-@()/: ]+>\s?$").unwrap();
 
     // Privileged EXEC mode - "#" prompt
     // not_contains "(config" prevents matching config mode prompts
-    let privilege_exec = PrivilegeLevel::new("privilege_exec", r"(?mi)^[\w.\-@()/: ]{1,63}#\s?$")
+    let privilege_exec = PrivilegeLevel::new("privilege_exec", r"(?m)(?-u)^[\w.\-@()/: ]+#\s?$")
         .unwrap()
         .with_parent("exec")
         .with_escalate("enable")
         .with_deescalate("disable")
-        .with_auth(r"(?mi)^password:\s?$")
+        .with_auth(r"(?-u)^password:\s?$")
         .unwrap()
         .with_not_contains("(config");
 
@@ -54,7 +54,7 @@ pub fn platform() -> PlatformDefinition {
     // not_contains "(config-s-" prevents matching named session prompts
     let configuration = PrivilegeLevel::new(
         "configuration",
-        r"(?mi)^[\w.\-@()/: ]{1,63}\(config[\w.\-@/:+]{0,63}\)#\s?$",
+        r"(?m)(?-u)^[\w.\-@()/: ]+\(config[\w.\-@/:+]*\)#\s?$",
     )
     .unwrap()
     .with_parent("privilege_exec")

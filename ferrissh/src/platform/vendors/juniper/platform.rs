@@ -55,19 +55,19 @@ pub const PLATFORM_NAME: &str = "juniper_junos";
 /// Create the Juniper JUNOS platform definition.
 ///
 /// Prompt patterns adapted from scrapli's JunOS driver.
-/// Uses `(?mi)` flags for multiline (^ matches line start) and case-insensitive matching.
+/// Uses `(?m)` flag for multiline (^ matches line start).
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode - ">" prompt
     let exec = PrivilegeLevel::new(
         "exec",
-        r"(?mi)^(\{\w+(:(\w+)?\d)?\}\n)?[\w\-@()/:\.]{1,63}>\s?$",
+        r"(?m)(?-u)^(?:\{\w+(?:(?:\w+)?\d)?\}\n)?[\w\-@()/:\.]+>\s?$",
     )
     .unwrap();
 
     // Configuration mode - "#" prompt
     let configuration = PrivilegeLevel::new(
         "configuration",
-        r"(?mi)^(\{\w+(:(\w+)?\d)?\}\[edit\]\n)?[\w\-@()/:\.]{1,63}#\s?$",
+        r"(?m)(?-u)^(?:\{\w+(?:(?:\w+)?\d)?\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$",
     )
     .unwrap()
     .with_parent("exec")
@@ -75,7 +75,7 @@ pub fn platform() -> PlatformDefinition {
     .with_deescalate("exit configuration-mode");
 
     // Shell mode - "%" or "$" prompt (non-root)
-    let shell = PrivilegeLevel::new("shell", r"(?mi)^.*[%$]\s?$")
+    let shell = PrivilegeLevel::new("shell", r"(?m)(?-u)^.*[%$]\s?$")
         .unwrap()
         .with_parent("exec")
         .with_escalate("start shell")
@@ -83,12 +83,12 @@ pub fn platform() -> PlatformDefinition {
         .with_not_contains("root");
 
     // Root shell mode - root user "%" or "#" prompt
-    let root_shell = PrivilegeLevel::new("root_shell", r"(?mi)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$")
+    let root_shell = PrivilegeLevel::new("root_shell", r"(?m)(?-u)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$")
         .unwrap()
         .with_parent("exec")
         .with_escalate("start shell user root")
         .with_deescalate("exit")
-        .with_auth(r"(?i)^password:\s?$")
+        .with_auth(r"(?-u)^password:\s?$")
         .unwrap();
 
     PlatformDefinition::new(PLATFORM_NAME)

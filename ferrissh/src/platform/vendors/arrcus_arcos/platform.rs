@@ -19,14 +19,14 @@ pub const PLATFORM_NAME: &str = "arrcus_arcos";
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode: user@host#
     // not_contains "(config" prevents matching config mode prompts
-    let exec = PrivilegeLevel::new("exec", r"(?mi)^[\w\-.@()/:]{1,63}#\s?$")
+    let exec = PrivilegeLevel::new("exec", r"(?m)(?-u)^[\w\-.@()/:]+#\s?$")
         .unwrap()
         .with_not_contains("(config");
 
     // Configuration mode: user@host(config)# or user@host(config-xxx)#
     let configuration = PrivilegeLevel::new(
         "configuration",
-        r"(?mi)^[\w\-.@()/:]{1,63}\(config[\w.\-@/:]{0,32}\)#\s?$",
+        r"(?m)(?-u)^[\w\-.@()/:]+\(config[\w.\-@/:]*\)#\s?$",
     )
     .unwrap()
     .with_parent("exec")

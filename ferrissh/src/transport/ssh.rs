@@ -34,12 +34,19 @@ impl SshTransport {
     pub async fn connect(config: SshConfig) -> Result<Self> {
         debug!("connecting to {}:{}", config.host, config.port);
 
-        let ssh_config = Arc::new(client::Config {
+        let mut russh_cfg = client::Config {
             inactivity_timeout: config.inactivity_timeout,
             keepalive_interval: config.keepalive_interval,
             keepalive_max: config.keepalive_max,
             ..Default::default()
-        });
+        };
+        if let Some(v) = config.window_size {
+            russh_cfg.window_size = v;
+        }
+        if let Some(v) = config.maximum_packet_size {
+            russh_cfg.maximum_packet_size = v;
+        }
+        let ssh_config = Arc::new(russh_cfg);
 
         let host_key_error: Arc<Mutex<Option<TransportError>>> = Arc::new(Mutex::new(None));
 

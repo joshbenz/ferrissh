@@ -41,6 +41,8 @@ pub struct DriverBuilder {
     keepalive_interval: Option<Option<Duration>>,
     keepalive_max: Option<usize>,
     inactivity_timeout: Option<Option<Duration>>,
+    window_size: Option<u32>,
+    maximum_packet_size: Option<u32>,
 }
 
 impl DriverBuilder {
@@ -61,6 +63,8 @@ impl DriverBuilder {
             keepalive_interval: None,
             keepalive_max: None,
             inactivity_timeout: None,
+            window_size: None,
+            maximum_packet_size: None,
         }
     }
 
@@ -191,6 +195,27 @@ impl DriverBuilder {
         self
     }
 
+    /// Set the SSH channel window size in bytes.
+    ///
+    /// Controls the SSH flow-control window — the maximum amount of
+    /// unacknowledged data the remote side can send before waiting for a
+    /// window adjustment. Larger values allow higher throughput but use
+    /// more memory per channel. Default: russh default (2 MiB).
+    pub fn window_size(mut self, size: u32) -> Self {
+        self.window_size = Some(size);
+        self
+    }
+
+    /// Set the maximum SSH packet size in bytes.
+    ///
+    /// The maximum size of a single SSH data packet. Larger values reduce
+    /// framing overhead but increase per-packet memory. Default: russh
+    /// default (32 KiB).
+    pub fn maximum_packet_size(mut self, size: u32) -> Self {
+        self.maximum_packet_size = Some(size);
+        self
+    }
+
     /// Build the driver.
     ///
     /// This creates the driver but does not connect. Call `open()` on the
@@ -243,6 +268,8 @@ impl DriverBuilder {
                 .unwrap_or(Some(Duration::from_secs(30))),
             keepalive_max: self.keepalive_max.unwrap_or(3),
             inactivity_timeout: self.inactivity_timeout.unwrap_or(None),
+            window_size: self.window_size,
+            maximum_packet_size: self.maximum_packet_size,
         };
 
         Ok(GenericDriver::new(

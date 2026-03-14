@@ -82,7 +82,7 @@ pub fn platform() -> PlatformDefinition {
     // not_contains filters out config mode prompts (which have (ex), (ro), (gl), (pr)).
     let exec = PrivilegeLevel::new(
         "exec",
-        r"(?mi)^\[.*\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
+        r"(?m)(?-u)^\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$",
     )
     .unwrap()
     .with_not_contains("(ex)")
@@ -95,7 +95,7 @@ pub fn platform() -> PlatformDefinition {
     // Second line: optional * + CPM:user@host#
     let configuration = PrivilegeLevel::new(
         "configuration",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
+        r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$",
     )
     .unwrap()
     .with_parent("exec")
@@ -106,7 +106,7 @@ pub fn platform() -> PlatformDefinition {
     // Same as configuration but path has 2+ characters (e.g., [/configure router "Base"])
     let configuration_with_path = PrivilegeLevel::new(
         "configuration_with_path",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|\s){2,}\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
+        r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|[ \t]){2,}\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$",
     )
     .unwrap()
     .with_parent("exec")
@@ -120,7 +120,7 @@ pub fn platform() -> PlatformDefinition {
     // Pattern: optional * + CPM letter : hostname #
     // not_contains "@" prevents matching MD-CLI's second prompt line
     // not_contains ">config" prevents matching classic_configuration
-    let classic_exec = PrivilegeLevel::new("classic_exec", r"(?mi)^\*?[abcd]:[\w\s_.-]+#\s?$")
+    let classic_exec = PrivilegeLevel::new("classic_exec", r"(?m)(?-u)^\*?[a-dA-D]:[\w \t_.-]+#\s?$")
         .unwrap()
         .with_not_contains("@")
         .with_not_contains(">config");
@@ -130,7 +130,7 @@ pub fn platform() -> PlatformDefinition {
     // not_contains "@" prevents matching MD-CLI prompts
     let classic_configuration = PrivilegeLevel::new(
         "classic_configuration",
-        r"(?mi)^\*?[abcd]:[\w\s_.-]+>config[\w>./-]*(#|\$)\s?$",
+        r"(?m)(?-u)^\*?[a-dA-D]:[\w \t_.-]+>config[\w>./-]*(?:#|\$)\s?$",
     )
     .unwrap()
     .with_parent("classic_exec")
