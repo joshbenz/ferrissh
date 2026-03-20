@@ -103,7 +103,7 @@ impl PtyChannel {
 
     /// Read until any of the given patterns matches (with timeout).
     ///
-    /// Like [`read_until_pattern`] but checks multiple individual patterns
+    /// Like [`PtyChannel::read_until_pattern`] but checks multiple individual patterns
     /// instead of one combined regex, avoiding combined-NFA memory overhead.
     pub async fn read_until_any_pattern(
         &mut self,
