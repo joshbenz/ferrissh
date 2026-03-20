@@ -42,8 +42,8 @@ use regex::bytes::Regex;
 use tokio::sync::watch;
 
 use crate::channel::{PtyChannel, PtyConfig};
-use crate::driver::channel::Channel;
 use crate::driver::PrivilegeLevelsBase;
+use crate::driver::channel::Channel;
 use crate::error::{DisconnectReason, DriverError, PlatformError, Result};
 use crate::platform::{Platform, PlatformDefinition};
 use secrecy::SecretString;
@@ -107,9 +107,7 @@ impl Session {
             .map(|level| level.pattern.clone())
             .collect();
 
-        let privilege_base = Arc::new(PrivilegeLevelsBase::new(
-            platform.privilege_levels.clone(),
-        ));
+        let privilege_base = Arc::new(PrivilegeLevelsBase::new(platform.privilege_levels.clone()));
 
         Self {
             inner: Arc::new(SessionInner {

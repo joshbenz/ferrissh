@@ -9,12 +9,9 @@ use regex::bytes::Regex;
 
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
 
-static USER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[$]\s*$").unwrap());
-static ROOT_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[#]\s*$").unwrap());
-static ROOT_AUTH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[Pp]assword[:\s]*$").unwrap());
+static USER_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[$]\s*$").unwrap());
+static ROOT_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[#]\s*$").unwrap());
+static ROOT_AUTH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[Pp]assword[:\s]*$").unwrap());
 
 /// Create the Linux platform definition.
 pub fn platform() -> PlatformDefinition {

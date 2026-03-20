@@ -28,8 +28,8 @@ pub const PLATFORM_NAME: &str = "arrcus_arcos";
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode: user@host#
     // not_contains "(config" prevents matching config mode prompts
-    let exec = PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone())
-        .with_not_contains("(config");
+    let exec =
+        PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone()).with_not_contains("(config");
 
     // Configuration mode: user@host(config)# or user@host(config-xxx)#
     let configuration = PrivilegeLevel::from_regex("configuration", CONFIG_PATTERN.clone())

@@ -52,9 +52,8 @@ use crate::platform::{PlatformDefinition, PrivilegeLevel, StreamProcessor, Vendo
 
 static EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\n)?[\w\-@()/:\.]+>\s?$").unwrap());
-static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$").unwrap()
-});
+static CONFIG_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$").unwrap());
 static SHELL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*[%$]\s?$").unwrap());
 static ROOT_SHELL_PATTERN: LazyLock<Regex> =

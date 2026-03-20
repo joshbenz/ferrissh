@@ -167,8 +167,7 @@ impl<'a> CommandStream<'a> {
             // 3. Check tail for prompt pattern (on un-normalized data)
             let tail_start = self.holdback.len().saturating_sub(self.search_depth);
             let tail = &self.holdback[tail_start..];
-            let prompt_match = self.prompt_patterns.iter()
-                .find_map(|p| p.find(tail));
+            let prompt_match = self.prompt_patterns.iter().find_map(|p| p.find(tail));
             if let Some(m) = prompt_match {
                 // PROMPT FOUND — finalize
                 //

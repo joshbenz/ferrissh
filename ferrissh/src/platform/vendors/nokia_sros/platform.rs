@@ -70,7 +70,8 @@ static EXEC_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(?-u)^\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
 });
 static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$")
+        .unwrap()
 });
 static CONFIG_WITH_PATH_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|[ \t]){2,}\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()

@@ -150,12 +150,10 @@ impl PrivilegeManager {
             }
         }
 
-        let total = self.base.levels.len()
-            + self.dynamic.as_ref().map_or(0, |d| d.levels.len());
+        let total = self.base.levels.len() + self.dynamic.as_ref().map_or(0, |d| d.levels.len());
         trace!(
             "no privilege level matched prompt {:?} (checked {} levels)",
-            prompt,
-            total
+            prompt, total
         );
         Err(DriverError::UnknownPrivilege {
             prompt: prompt.to_string(),
@@ -183,20 +181,20 @@ impl PrivilegeManager {
 
     /// Get a privilege level by name, checking dynamic overlay first.
     pub fn get(&self, name: &str) -> Option<&PrivilegeLevel> {
-        if let Some(ref overlay) = self.dynamic {
-            if let Some(level) = overlay.levels.get(name) {
-                return Some(level);
-            }
+        if let Some(ref overlay) = self.dynamic
+            && let Some(level) = overlay.levels.get(name)
+        {
+            return Some(level);
         }
         self.base.get(name)
     }
 
     /// Check if a privilege level exists (in dynamic or base).
     fn contains_key(&self, name: &str) -> bool {
-        if let Some(ref overlay) = self.dynamic {
-            if overlay.levels.contains_key(name) {
-                return true;
-            }
+        if let Some(ref overlay) = self.dynamic
+            && overlay.levels.contains_key(name)
+        {
+            return true;
         }
         self.base.levels.contains_key(name)
     }
@@ -444,12 +442,11 @@ mod tests {
         let mut manager = PrivilegeManager::new(make_test_base());
 
         // Register a dynamic config session level
-        let session_level =
-            PrivilegeLevel::new("config_session_test", r"\(config\-s\-test\)#\s*$")
-                .unwrap()
-                .with_parent("privileged")
-                .with_escalate("configure session test")
-                .with_deescalate("end");
+        let session_level = PrivilegeLevel::new("config_session_test", r"\(config\-s\-test\)#\s*$")
+            .unwrap()
+            .with_parent("privileged")
+            .with_escalate("configure session test")
+            .with_deescalate("end");
 
         manager.register_dynamic_level(session_level);
 
