@@ -67,7 +67,7 @@ use regex::bytes::Regex;
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 
 static EXEC_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+    Regex::new(r"(?m)(?-u)^!?\*?\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
 });
 static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof|gl|pr|ro)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$")
@@ -223,8 +223,17 @@ mod tests {
                 .is_match(b"[/show router interface]\nA:admin@node-2#")
         );
 
+        // With uncommitted changes indicator (* before [)
+        assert!(exec.pattern.is_match(b"*[/]\nA:admin@router#"));
+        assert!(exec.pattern.is_match(b"*[gl:/configure]\nA:admin@router#"));
+
+        // With outdated baseline indicator (! before [)
+        assert!(exec.pattern.is_match(b"![/]\nA:admin@router#"));
+        assert!(exec.pattern.is_match(b"!*[/]\nA:admin@router#"));
+
         // matches() filters out config mode via not_contains
         assert!(exec.matches("[/]\nA:admin@router#"));
+        assert!(exec.matches("*[gl:/configure]\nA:svc-github-neo@use11.sv5#"));
         assert!(exec.matches("[/]\r\nA:svc-github-neo@use1.lm1#"));
         assert!(!exec.matches("(ex)[/]\nA:admin@router#"));
         assert!(!exec.matches("(ro)[/]\nA:admin@router#"));
