@@ -1,6 +1,5 @@
 //! SSH transport implementation using russh.
 
-use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -50,17 +49,6 @@ impl SshTransport {
         if let Some(v) = config.channel_buffer_size {
             russh_cfg.channel_buffer_size = v;
         }
-        russh_cfg.preferred = russh::Preferred {
-            kex: Cow::Borrowed(&[
-                russh::kex::CURVE25519,
-                russh::kex::CURVE25519_PRE_RFC_8731,
-                russh::kex::DH_G14_SHA256,
-                russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
-                russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
-            ]),
-            compression: Cow::Borrowed(&[russh::compression::NONE]),
-            ..russh::Preferred::DEFAULT
-        };
         let ssh_config = Arc::new(russh_cfg);
 
         let host_key_error: Arc<Mutex<Option<TransportError>>> = Arc::new(Mutex::new(None));
