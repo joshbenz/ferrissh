@@ -101,6 +101,48 @@ impl PtyChannel {
         }
     }
 
+    /// Read until any of the given patterns matches (with timeout).
+    ///
+    /// Like [`read_until_pattern`] but checks multiple individual patterns
+    /// instead of one combined regex, avoiding combined-NFA memory overhead.
+    pub async fn read_until_any_pattern(
+        &mut self,
+        patterns: &[Regex],
+        timeout: Duration,
+    ) -> Result<BytesMut> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ChannelError::PatternTimeout(timeout).into());
+                }
+                msg = self.channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            self.buffer.extend(&data);
+                            if self.buffer.search_tail_any(patterns).is_some() {
+                                trace!("prompt pattern matched after {} bytes", self.buffer.as_slice().len());
+                                return Ok(self.buffer.take());
+                            }
+                        }
+                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                            // stderr - also add to buffer
+                            self.buffer.extend(&data);
+                        }
+                        Some(ChannelMsg::Eof) => {
+                            return Err(ChannelError::Eof.into());
+                        }
+                        None => {
+                            return Err(ChannelError::Disconnected.into());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     /// Read one batch of SSH data without waiting for a prompt pattern.
     ///
     /// Returns ANSI-stripped data after receiving the first `Data` message.

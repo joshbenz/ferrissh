@@ -94,6 +94,15 @@ pub struct SshConfig {
     ///
     /// Default: `None` (uses the russh default of 32 KiB).
     pub maximum_packet_size: Option<u32>,
+
+    /// Number of buffered messages per SSH channel (tokio mpsc capacity).
+    ///
+    /// Each message in the buffer causes tokio to allocate a `Block` of 32
+    /// slots. Lowering this from the russh default (100 → 4 blocks) to 32
+    /// (1 block) saves ~50 KB per channel for interactive CLI workloads.
+    ///
+    /// Default: `None` (uses the russh default of 100).
+    pub channel_buffer_size: Option<usize>,
 }
 
 impl SshConfig {
@@ -188,6 +197,7 @@ mod tests {
             inactivity_timeout: None,
             window_size: None,
             maximum_packet_size: None,
+            channel_buffer_size: None,
         };
         let debug_output = format!("{:?}", config);
         assert!(!debug_output.contains("secret_password"));

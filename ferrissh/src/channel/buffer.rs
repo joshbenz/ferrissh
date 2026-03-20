@@ -97,6 +97,22 @@ impl PatternBuffer {
         pattern.find(tail)
     }
 
+    /// Search the tail for any of the given patterns (short-circuits on first match).
+    ///
+    /// Avoids the need for a combined mega-regex — each pattern's NFA is small
+    /// and cache-friendly, and prompt patterns are mutually exclusive so at
+    /// most one will match.
+    pub fn search_tail_any(&self, patterns: &[Regex]) -> Option<regex::bytes::Match<'_>> {
+        let start = self.buffer.len().saturating_sub(self.search_depth);
+        let tail = &self.buffer[start..];
+        for pattern in patterns {
+            if let Some(m) = pattern.find(tail) {
+                return Some(m);
+            }
+        }
+        None
+    }
+
     /// Search the entire buffer for a pattern.
     ///
     /// Use sparingly - prefer `search_tail` for prompt detection.

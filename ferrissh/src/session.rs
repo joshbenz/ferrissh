@@ -43,6 +43,7 @@ use tokio::sync::watch;
 
 use crate::channel::{PtyChannel, PtyConfig};
 use crate::driver::channel::Channel;
+use crate::driver::PrivilegeLevelsBase;
 use crate::error::{DisconnectReason, DriverError, PlatformError, Result};
 use crate::platform::{Platform, PlatformDefinition};
 use secrecy::SecretString;
@@ -61,8 +62,11 @@ struct SessionInner {
     /// SSH configuration (kept for opening channels).
     ssh_config: SshConfig,
 
-    /// Combined prompt pattern for all privilege levels.
-    prompt_pattern: Regex,
+    /// Individual prompt patterns (avoids combined-NFA memory overhead).
+    prompt_patterns: Vec<Regex>,
+
+    /// Shared immutable privilege level data (Arc-shared across channels).
+    privilege_base: Arc<PrivilegeLevelsBase>,
 
     /// Sender for disconnect notifications.
     disconnect_tx: Arc<watch::Sender<Option<DisconnectReason>>>,
@@ -97,14 +101,23 @@ impl Session {
         let disconnect_tx = transport.disconnect_tx().clone();
         let disconnect_rx = transport.disconnect_rx().clone();
 
-        let prompt_pattern = build_combined_pattern(&platform);
+        let prompt_patterns: Vec<Regex> = platform
+            .privilege_levels
+            .values()
+            .map(|level| level.pattern.clone())
+            .collect();
+
+        let privilege_base = Arc::new(PrivilegeLevelsBase::new(
+            platform.privilege_levels.clone(),
+        ));
 
         Self {
             inner: Arc::new(SessionInner {
                 transport,
                 platform: Arc::new(platform),
                 ssh_config,
-                prompt_pattern,
+                prompt_patterns,
+                privilege_base,
                 disconnect_tx,
                 disconnect_rx,
                 connected_since: Instant::now(),
@@ -131,7 +144,7 @@ impl Session {
             self.clone(),
             pty,
             self.inner.ssh_config.timeout,
-            self.inner.prompt_pattern.clone(),
+            self.inner.prompt_patterns.clone(),
             true, // normalize
             self.inner.disconnect_rx.clone(),
             auth_password,
@@ -163,9 +176,14 @@ impl Session {
         self.inner.connected_since
     }
 
-    /// Get the combined prompt pattern.
-    pub fn prompt_pattern(&self) -> &Regex {
-        &self.inner.prompt_pattern
+    /// Get the prompt patterns.
+    pub fn prompt_patterns(&self) -> &[Regex] {
+        &self.inner.prompt_patterns
+    }
+
+    /// Get the shared privilege levels base (Arc-shared across channels).
+    pub(crate) fn privilege_base(&self) -> &Arc<PrivilegeLevelsBase> {
+        &self.inner.privilege_base
     }
 
     /// Wait until the session disconnects and return the reason.
@@ -234,18 +252,6 @@ impl std::fmt::Debug for Session {
     }
 }
 
-/// Build a combined regex pattern that matches any privilege level's prompt.
-fn build_combined_pattern(platform: &PlatformDefinition) -> Regex {
-    let patterns: Vec<String> = platform
-        .privilege_levels
-        .values()
-        .map(|level| format!("(?:{})", level.pattern.as_str()))
-        .collect();
-
-    let combined = patterns.join("|");
-    Regex::new(&combined).unwrap_or_else(|_| crate::driver::channel::FALLBACK_PROMPT.clone())
-}
-
 // =============================================================================
 // SessionBuilder
 // =============================================================================
@@ -287,6 +293,7 @@ pub struct SessionBuilder {
     inactivity_timeout: Option<Option<Duration>>,
     window_size: Option<u32>,
     maximum_packet_size: Option<u32>,
+    channel_buffer_size: Option<usize>,
 }
 
 impl SessionBuilder {
@@ -308,6 +315,7 @@ impl SessionBuilder {
             inactivity_timeout: None,
             window_size: None,
             maximum_packet_size: None,
+            channel_buffer_size: None,
         }
     }
 
@@ -427,6 +435,16 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the number of buffered messages per SSH channel.
+    ///
+    /// Controls the tokio mpsc channel capacity inside russh. Lower values
+    /// reduce per-channel memory for interactive CLI workloads. Default:
+    /// russh default (100).
+    pub fn channel_buffer_size(mut self, size: usize) -> Self {
+        self.channel_buffer_size = Some(size);
+        self
+    }
+
     /// Connect to the SSH server and authenticate.
     ///
     /// Returns a [`Session`] representing the authenticated connection.
@@ -482,6 +500,7 @@ impl SessionBuilder {
             inactivity_timeout: self.inactivity_timeout.unwrap_or(None),
             window_size: self.window_size,
             maximum_packet_size: self.maximum_packet_size,
+            channel_buffer_size: self.channel_buffer_size,
         };
 
         debug!(

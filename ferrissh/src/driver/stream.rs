@@ -44,7 +44,7 @@ pub struct StreamCompletion {
 
 /// Configuration snapshot used to construct a [`CommandStream`].
 pub(crate) struct StreamConfig {
-    pub prompt_pattern: Regex,
+    pub prompt_patterns: Vec<Regex>,
     pub search_depth: usize,
     pub timeout: Duration,
     pub normalize: bool,
@@ -76,8 +76,8 @@ pub struct CommandStream<'a> {
     failed_when_contains: Vec<String>,
     /// How many bytes from the end to hold back for prompt detection.
     search_depth: usize,
-    /// Combined prompt regex.
-    prompt_pattern: Regex,
+    /// Individual prompt patterns (avoids combined-NFA memory overhead).
+    prompt_patterns: Vec<Regex>,
     /// Timeout for each read operation.
     timeout: Duration,
     /// When the command was sent.
@@ -115,7 +115,7 @@ impl<'a> CommandStream<'a> {
             processor: config.processor,
             failed_when_contains: config.failed_when_contains,
             search_depth: config.search_depth,
-            prompt_pattern: config.prompt_pattern,
+            prompt_patterns: config.prompt_patterns,
             timeout: config.timeout,
             start,
             done: false,
@@ -166,7 +166,10 @@ impl<'a> CommandStream<'a> {
 
             // 3. Check tail for prompt pattern (on un-normalized data)
             let tail_start = self.holdback.len().saturating_sub(self.search_depth);
-            if let Some(m) = self.prompt_pattern.find(&self.holdback[tail_start..]) {
+            let tail = &self.holdback[tail_start..];
+            let prompt_match = self.prompt_patterns.iter()
+                .find_map(|p| p.find(tail));
+            if let Some(m) = prompt_match {
                 // PROMPT FOUND — finalize
                 //
                 // The regex may match only part of the prompt line (e.g., `$ ` at the end

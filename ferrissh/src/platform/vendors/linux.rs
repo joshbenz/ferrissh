@@ -3,19 +3,28 @@
 //! This is the simplest platform, supporting standard Linux/Unix shells
 //! with `$` (user) and `#` (root) prompts.
 
+use std::sync::LazyLock;
+
+use regex::bytes::Regex;
+
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
+
+static USER_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[$]\s*$").unwrap());
+static ROOT_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[#]\s*$").unwrap());
+static ROOT_AUTH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[Pp]assword[:\s]*$").unwrap());
 
 /// Create the Linux platform definition.
 pub fn platform() -> PlatformDefinition {
-    let user = PrivilegeLevel::new("user", r"[$]\s*$").unwrap();
+    let user = PrivilegeLevel::from_regex("user", USER_PATTERN.clone());
 
-    let root = PrivilegeLevel::new("root", r"[#]\s*$")
-        .unwrap()
+    let root = PrivilegeLevel::from_regex("root", ROOT_PATTERN.clone())
         .with_parent("user")
         .with_escalate("sudo -i")
         .with_deescalate("exit")
-        .with_auth(r"[Pp]assword[:\s]*$")
-        .unwrap();
+        .with_auth_regex(ROOT_AUTH.clone());
 
     PlatformDefinition::new("linux")
         .with_privilege(user)

@@ -7,7 +7,7 @@
 //! Channels are created via [`Session::open_channel()`](crate::Session::open_channel)
 //! or [`GenericDriver::open_channel()`](super::GenericDriver::open_channel).
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
@@ -27,10 +27,6 @@ use crate::error::{ChannelError, DisconnectReason, DriverError, Error, Result, T
 use crate::platform::PlatformDefinition;
 use crate::session::Session;
 use log::{debug, trace, warn};
-
-/// Fallback prompt pattern used when the combined platform pattern fails to compile.
-pub(crate) static FALLBACK_PROMPT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[$#>]\s*$").expect("hardcoded fallback regex must compile"));
 
 /// The state of a channel's PTY shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +59,8 @@ pub struct Channel {
     /// Default timeout for operations.
     timeout: Duration,
 
-    /// Combined prompt pattern (can diverge from session for dynamic levels).
-    prompt_pattern: Regex,
+    /// Individual prompt patterns (avoids combined-NFA memory overhead).
+    prompt_patterns: Vec<Regex>,
 
     /// Whether to normalize command output.
     normalize: bool,
@@ -91,19 +87,19 @@ impl Channel {
         session: Session,
         pty: PtyChannel,
         timeout: Duration,
-        prompt_pattern: Regex,
+        prompt_patterns: Vec<Regex>,
         normalize: bool,
         disconnect_rx: watch::Receiver<Option<DisconnectReason>>,
         auth_password: Option<SecretString>,
     ) -> Self {
-        let privilege_manager = PrivilegeManager::new(session.platform().privilege_levels.clone());
+        let privilege_manager = PrivilegeManager::new(session.privilege_base().clone());
 
         Self {
             session,
             pty,
             privilege_manager,
             timeout,
-            prompt_pattern,
+            prompt_patterns,
             normalize,
             state: ChannelState::Ready,
             disconnect_rx,
@@ -161,7 +157,7 @@ impl Channel {
         // Wait for prompt
         let read_result = self
             .pty
-            .read_until_pattern(&self.prompt_pattern, self.timeout)
+            .read_until_any_pattern(&self.prompt_patterns, self.timeout)
             .await;
 
         let mut data = match read_result {
@@ -254,7 +250,7 @@ impl Channel {
         }
 
         let config = StreamConfig {
-            prompt_pattern: self.prompt_pattern.clone(),
+            prompt_patterns: self.prompt_patterns.clone(),
             search_depth: self.pty.search_depth(),
             timeout: self.timeout,
             normalize: self.normalize,
@@ -563,9 +559,9 @@ impl Channel {
         &mut self.privilege_manager
     }
 
-    /// Get the current prompt pattern.
-    pub fn prompt_pattern(&self) -> &Regex {
-        &self.prompt_pattern
+    /// Get the current prompt patterns.
+    pub fn prompt_patterns(&self) -> &[Regex] {
+        &self.prompt_patterns
     }
 
     /// Set the default timeout.
@@ -583,17 +579,17 @@ impl Channel {
         self.last_command_at
     }
 
-    /// Rebuild the combined prompt pattern from current privilege levels.
+    /// Rebuild prompt patterns from current privilege levels.
+    ///
+    /// Simply collects references to each level's already-compiled pattern.
+    /// No regex recompilation needed — individual patterns are already compiled
+    /// in each `PrivilegeLevel`.
     pub fn rebuild_prompt_pattern(&mut self) {
-        let patterns: Vec<String> = self
+        self.prompt_patterns = self
             .privilege_manager
-            .levels()
-            .values()
-            .map(|level| format!("(?:{})", level.pattern.as_str()))
+            .all_levels()
+            .map(|level| level.pattern.clone())
             .collect();
-
-        let combined = patterns.join("|");
-        self.prompt_pattern = Regex::new(&combined).unwrap_or_else(|_| FALLBACK_PROMPT.clone());
     }
 
     /// Close this channel.
@@ -617,7 +613,7 @@ impl Channel {
             // Best-effort wait for prompt
             if let Err(e) = self
                 .pty
-                .read_until_pattern(&self.prompt_pattern, self.timeout)
+                .read_until_any_pattern(&self.prompt_patterns, self.timeout)
                 .await
             {
                 warn!("on_close command {:?} failed to complete: {}", cmd, e);
@@ -705,23 +701,24 @@ impl Channel {
         let search_depth = self.pty.search_depth();
         let tail_start = data.len().saturating_sub(search_depth);
         let tail = &data[tail_start..];
-        if let Some(m) = self.prompt_pattern.find(tail) {
-            let matched = String::from_utf8_lossy(&tail[m.start()..])
-                .trim()
-                .to_string();
-            trace!("prompt matched: {:?}", matched);
-            matched
-        } else {
-            trace!("no prompt match in {} bytes of output", data.len());
-            String::new()
+        for pattern in &self.prompt_patterns {
+            if let Some(m) = pattern.find(tail) {
+                let matched = String::from_utf8_lossy(&tail[m.start()..])
+                    .trim()
+                    .to_string();
+                trace!("prompt matched: {:?}", matched);
+                return matched;
+            }
         }
+        trace!("no prompt match in {} bytes of output", data.len());
+        String::new()
     }
 
     /// Read until the prompt is matched, then determine current privilege.
     async fn read_until_prompt(&mut self) -> Result<(BytesMut, String)> {
         let data = self
             .pty
-            .read_until_pattern(&self.prompt_pattern, self.timeout)
+            .read_until_any_pattern(&self.prompt_patterns, self.timeout)
             .await?;
 
         let prompt = self.extract_prompt(&data);
@@ -1405,15 +1402,6 @@ mod tests {
         assert!(resp.contains("router1"));
         assert_eq!(resp.lines().count(), 1);
         assert_eq!(format!("{}", resp), "Hostname: router1");
-    }
-
-    #[test]
-    fn test_fallback_prompt_compiles() {
-        // Verify the LazyLock FALLBACK_PROMPT can be accessed without panic
-        let _ = FALLBACK_PROMPT.clone();
-        assert!(FALLBACK_PROMPT.is_match(b"router# "));
-        assert!(FALLBACK_PROMPT.is_match(b"user$ "));
-        assert!(FALLBACK_PROMPT.is_match(b"switch> "));
     }
 
     #[test]

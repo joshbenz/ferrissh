@@ -26,7 +26,20 @@
 //! └──────┘◄────────────┴────────────────┘◄─────────────────────┴───────────────┘
 //! ```
 
+use std::sync::LazyLock;
+
+use regex::bytes::Regex;
+
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
+
+static EXEC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+>\s?$").unwrap());
+static PRIV_EXEC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+#\s?$").unwrap());
+static PRIV_EXEC_AUTH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?-u)^password:\s?$").unwrap());
+static CONFIG_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+\(config[\w.\-@/:+]*\)#\s?$").unwrap());
 
 /// Platform name for Arista EOS.
 pub const PLATFORM_NAME: &str = "arista_eos";
@@ -37,30 +50,24 @@ pub const PLATFORM_NAME: &str = "arista_eos";
 /// Uses `(?m)` flag for multiline (^ matches line start).
 pub fn platform() -> PlatformDefinition {
     // Exec mode - ">" prompt
-    let exec = PrivilegeLevel::new("exec", r"(?m)(?-u)^[\w.\-@()/: ]+>\s?$").unwrap();
+    let exec = PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone());
 
     // Privileged EXEC mode - "#" prompt
     // not_contains "(config" prevents matching config mode prompts
-    let privilege_exec = PrivilegeLevel::new("privilege_exec", r"(?m)(?-u)^[\w.\-@()/: ]+#\s?$")
-        .unwrap()
+    let privilege_exec = PrivilegeLevel::from_regex("privilege_exec", PRIV_EXEC_PATTERN.clone())
         .with_parent("exec")
         .with_escalate("enable")
         .with_deescalate("disable")
-        .with_auth(r"(?-u)^password:\s?$")
-        .unwrap()
+        .with_auth_regex(PRIV_EXEC_AUTH.clone())
         .with_not_contains("(config");
 
     // Configuration mode - "(config*)" prompt
     // not_contains "(config-s-" prevents matching named session prompts
-    let configuration = PrivilegeLevel::new(
-        "configuration",
-        r"(?m)(?-u)^[\w.\-@()/: ]+\(config[\w.\-@/:+]*\)#\s?$",
-    )
-    .unwrap()
-    .with_parent("privilege_exec")
-    .with_escalate("configure terminal")
-    .with_deescalate("end")
-    .with_not_contains("(config-s-");
+    let configuration = PrivilegeLevel::from_regex("configuration", CONFIG_PATTERN.clone())
+        .with_parent("privilege_exec")
+        .with_escalate("configure terminal")
+        .with_deescalate("end")
+        .with_not_contains("(config-s-");
 
     PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)

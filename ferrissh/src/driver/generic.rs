@@ -63,9 +63,9 @@ impl GenericDriver {
         }
     }
 
-    /// Get the current prompt pattern.
-    pub fn prompt_pattern(&self) -> Option<&regex::bytes::Regex> {
-        self.channel.as_ref().map(|c| c.prompt_pattern())
+    /// Get the current prompt patterns.
+    pub fn prompt_patterns(&self) -> Option<&[regex::bytes::Regex]> {
+        self.channel.as_ref().map(|c| c.prompt_patterns())
     }
 
     /// Get a reference to the platform definition.
