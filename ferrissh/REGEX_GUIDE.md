@@ -41,7 +41,7 @@ A bounded repetition `{1,63}` creates 63 NFA states (one per possible count). An
 ### 4. Converted capturing groups to non-capturing
 
 **Before:** `(\{\w+(:(\w+)?\d)?\}\n)?`
-**After:** `(?:\{\w+(?:(?:\w+)?\d)?\}\n)?`
+**After:** `(?:\{\w+(?::(?:\w+)?\d)?\}\n)?`
 
 Each capturing group adds slots to the PikeVM's `SlotTable`. The table size is `NFA_states x capture_slots`, so unnecessary captures multiply memory. Use `(?:...)` unless you actually need to extract the matched group.
 

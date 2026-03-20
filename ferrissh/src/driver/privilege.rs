@@ -317,7 +317,7 @@ impl PrivilegeManager {
     /// that need to add temporary privilege levels for session prompts.
     ///
     /// After calling this, you must also call `Channel::rebuild_prompt_pattern()`
-    /// so the driver can recognize the new prompt.
+    /// so the channel's prompt pattern list includes the new pattern.
     pub fn register_dynamic_level(&mut self, level: PrivilegeLevel) {
         let overlay = self.dynamic.get_or_insert_with(|| DynamicOverlay {
             levels: IndexMap::new(),
@@ -335,7 +335,7 @@ impl PrivilegeManager {
     /// Remove a dynamically registered privilege level.
     ///
     /// After calling this, you must also call `Channel::rebuild_prompt_pattern()`
-    /// to remove the pattern from the combined prompt regex.
+    /// so the channel's prompt pattern list no longer includes the removed pattern.
     pub fn remove_dynamic_level(&mut self, name: &str) {
         if let Some(ref mut overlay) = self.dynamic {
             overlay.levels.shift_remove(name);
