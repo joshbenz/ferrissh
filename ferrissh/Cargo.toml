@@ -1,6 +1,6 @@
 [package]
 name = "ferrissh"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["Joshua Benz <voidsifr@gmail.com>"]
 description = "Async SSH CLI scraper library for network device automation"
@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["full"] }
 
 bytes = "1"
 memchr = "2"
-regex = "1"
+regex = { version = "1", default-features = false, features = ["std", "perf-literal"] }
 vte = "0.14"
 futures-core = "0.3"
 futures-util = "0.3"

@@ -11,7 +11,16 @@
 //! - Commands like `config`, `commit`, `revert`, `validate`, `compare running-config`
 //! - Terminal settings like `set cli screen-width`, `set cli screen-length`
 
+use std::sync::LazyLock;
+
+use regex::bytes::Regex;
+
 use crate::platform::{PlatformDefinition, PrivilegeLevel};
+
+static EXEC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w\-.@()/:]+#\s?$").unwrap());
+static CONFIG_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w\-.@()/:]+\(config[\w.\-@/:]*\)#\s?$").unwrap());
 
 pub const PLATFORM_NAME: &str = "arrcus_arcos";
 
@@ -19,19 +28,14 @@ pub const PLATFORM_NAME: &str = "arrcus_arcos";
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode: user@host#
     // not_contains "(config" prevents matching config mode prompts
-    let exec = PrivilegeLevel::new("exec", r"(?mi)^[\w\-.@()/:]{1,63}#\s?$")
-        .unwrap()
-        .with_not_contains("(config");
+    let exec =
+        PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone()).with_not_contains("(config");
 
     // Configuration mode: user@host(config)# or user@host(config-xxx)#
-    let configuration = PrivilegeLevel::new(
-        "configuration",
-        r"(?mi)^[\w\-.@()/:]{1,63}\(config[\w.\-@/:]{0,32}\)#\s?$",
-    )
-    .unwrap()
-    .with_parent("exec")
-    .with_escalate("config")
-    .with_deescalate("exit");
+    let configuration = PrivilegeLevel::from_regex("configuration", CONFIG_PATTERN.clone())
+        .with_parent("exec")
+        .with_escalate("config")
+        .with_deescalate("exit");
 
     PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)

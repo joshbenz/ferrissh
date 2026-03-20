@@ -43,11 +43,23 @@
 //!                                   exit
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::BytesMut;
+use regex::bytes::Regex;
 
 use crate::platform::{PlatformDefinition, PrivilegeLevel, StreamProcessor, VendorBehavior};
+
+static EXEC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\n)?[\w\-@()/:\.]+>\s?$").unwrap());
+static CONFIG_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$").unwrap());
+static SHELL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*[%$]\s?$").unwrap());
+static ROOT_SHELL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*root@\S*[%#]\s?$").unwrap());
+static ROOT_SHELL_AUTH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?-u)^password:\s?$").unwrap());
 
 /// Platform name for Juniper JUNOS.
 pub const PLATFORM_NAME: &str = "juniper_junos";
@@ -55,41 +67,30 @@ pub const PLATFORM_NAME: &str = "juniper_junos";
 /// Create the Juniper JUNOS platform definition.
 ///
 /// Prompt patterns adapted from scrapli's JunOS driver.
-/// Uses `(?mi)` flags for multiline (^ matches line start) and case-insensitive matching.
+/// Uses `(?m)` flag for multiline (^ matches line start).
 pub fn platform() -> PlatformDefinition {
     // Exec (operational) mode - ">" prompt
-    let exec = PrivilegeLevel::new(
-        "exec",
-        r"(?mi)^(\{\w+(:(\w+)?\d)?\}\n)?[\w\-@()/:\.]{1,63}>\s?$",
-    )
-    .unwrap();
+    let exec = PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone());
 
     // Configuration mode - "#" prompt
-    let configuration = PrivilegeLevel::new(
-        "configuration",
-        r"(?mi)^(\{\w+(:(\w+)?\d)?\}\[edit\]\n)?[\w\-@()/:\.]{1,63}#\s?$",
-    )
-    .unwrap()
-    .with_parent("exec")
-    .with_escalate("configure")
-    .with_deescalate("exit configuration-mode");
+    let configuration = PrivilegeLevel::from_regex("configuration", CONFIG_PATTERN.clone())
+        .with_parent("exec")
+        .with_escalate("configure")
+        .with_deescalate("exit configuration-mode");
 
     // Shell mode - "%" or "$" prompt (non-root)
-    let shell = PrivilegeLevel::new("shell", r"(?mi)^.*[%$]\s?$")
-        .unwrap()
+    let shell = PrivilegeLevel::from_regex("shell", SHELL_PATTERN.clone())
         .with_parent("exec")
         .with_escalate("start shell")
         .with_deescalate("exit")
         .with_not_contains("root");
 
     // Root shell mode - root user "%" or "#" prompt
-    let root_shell = PrivilegeLevel::new("root_shell", r"(?mi)^.*root@(?:\S*:?\S*\s?)?[%#]\s?$")
-        .unwrap()
+    let root_shell = PrivilegeLevel::from_regex("root_shell", ROOT_SHELL_PATTERN.clone())
         .with_parent("exec")
         .with_escalate("start shell user root")
         .with_deescalate("exit")
-        .with_auth(r"(?i)^password:\s?$")
-        .unwrap();
+        .with_auth_regex(ROOT_SHELL_AUTH.clone());
 
     PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)

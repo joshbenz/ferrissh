@@ -60,7 +60,27 @@
 //! Prompt patterns adapted from
 //! [scrapli](https://github.com/scrapli/scrapli_community/blob/main/scrapli_community/nokia/sros/nokia_sros.py).
 
+use std::sync::LazyLock;
+
+use regex::bytes::Regex;
+
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
+
+static EXEC_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?-u)^\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+});
+static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$")
+        .unwrap()
+});
+static CONFIG_WITH_PATH_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|[ \t]){2,}\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+});
+static CLASSIC_EXEC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^\*?[a-dA-D]:[\w \t_.-]+#\s?$").unwrap());
+static CLASSIC_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?-u)^\*?[a-dA-D]:[\w \t_.-]+>config[\w>./-]*(?:#|\$)\s?$").unwrap()
+});
 
 /// Platform name for Nokia SR OS.
 pub const PLATFORM_NAME: &str = "nokia_sros";
@@ -80,37 +100,26 @@ pub fn platform() -> PlatformDefinition {
     // Two-line prompt: context line + user@host# line
     // Pattern matches any [...]\nCPM:user@host# prompt.
     // not_contains filters out config mode prompts (which have (ex), (ro), (gl), (pr)).
-    let exec = PrivilegeLevel::new(
-        "exec",
-        r"(?mi)^\[.*\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
-    )
-    .unwrap()
-    .with_not_contains("(ex)")
-    .with_not_contains("(ro)")
-    .with_not_contains("(gl)")
-    .with_not_contains("(pr)");
+    let exec = PrivilegeLevel::from_regex("exec", EXEC_PATTERN.clone())
+        .with_not_contains("(ex)")
+        .with_not_contains("(ro)")
+        .with_not_contains("(gl)")
+        .with_not_contains("(pr)");
 
     // MD-CLI exclusive configuration mode at root level
     // First line: optional !/* indicators + (ex) or (ex:bof) + [/] or [/]
     // Second line: optional * + CPM:user@host#
-    let configuration = PrivilegeLevel::new(
-        "configuration",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
-    )
-    .unwrap()
-    .with_parent("exec")
-    .with_escalate("edit-config exclusive")
-    .with_deescalate("quit-config");
+    let configuration = PrivilegeLevel::from_regex("configuration", CONFIG_PATTERN.clone())
+        .with_parent("exec")
+        .with_escalate("edit-config exclusive")
+        .with_deescalate("quit-config");
 
     // MD-CLI exclusive configuration mode with deeper path
     // Same as configuration but path has 2+ characters (e.g., [/configure router "Base"])
-    let configuration_with_path = PrivilegeLevel::new(
-        "configuration_with_path",
-        r"(?mi)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|\s){2,}\]\r?\n\*?[abcd]:[\w._-]+@[\w\s_.-]+#\s?$",
-    )
-    .unwrap()
-    .with_parent("exec")
-    .with_deescalate("exit all");
+    let configuration_with_path =
+        PrivilegeLevel::from_regex("configuration_with_path", CONFIG_WITH_PATH_PATTERN.clone())
+            .with_parent("exec")
+            .with_deescalate("exit all");
 
     // =========================================================================
     // Classic CLI privilege levels (single-line prompts, no @)
@@ -120,23 +129,19 @@ pub fn platform() -> PlatformDefinition {
     // Pattern: optional * + CPM letter : hostname #
     // not_contains "@" prevents matching MD-CLI's second prompt line
     // not_contains ">config" prevents matching classic_configuration
-    let classic_exec = PrivilegeLevel::new("classic_exec", r"(?mi)^\*?[abcd]:[\w\s_.-]+#\s?$")
-        .unwrap()
+    let classic_exec = PrivilegeLevel::from_regex("classic_exec", CLASSIC_EXEC_PATTERN.clone())
         .with_not_contains("@")
         .with_not_contains(">config");
 
     // Classic configuration mode
     // Pattern: optional * + CPM : hostname > config [deeper>context] # or $
     // not_contains "@" prevents matching MD-CLI prompts
-    let classic_configuration = PrivilegeLevel::new(
-        "classic_configuration",
-        r"(?mi)^\*?[abcd]:[\w\s_.-]+>config[\w>./-]*(#|\$)\s?$",
-    )
-    .unwrap()
-    .with_parent("classic_exec")
-    .with_escalate("configure")
-    .with_deescalate("exit all")
-    .with_not_contains("@");
+    let classic_configuration =
+        PrivilegeLevel::from_regex("classic_configuration", CLASSIC_CONFIG_PATTERN.clone())
+            .with_parent("classic_exec")
+            .with_escalate("configure")
+            .with_deescalate("exit all")
+            .with_not_contains("@");
 
     PlatformDefinition::new(PLATFORM_NAME)
         .with_privilege(exec)

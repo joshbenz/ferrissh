@@ -48,6 +48,22 @@ impl PrivilegeLevel {
         })
     }
 
+    /// Create a privilege level from a pre-compiled regex.
+    ///
+    /// Use this with `LazyLock<Regex>` statics for zero-cost sharing
+    /// across sessions. `Regex::clone()` is an `Arc` increment.
+    pub fn from_regex(name: impl Into<String>, pattern: Regex) -> Self {
+        Self {
+            name: name.into(),
+            pattern,
+            previous_priv: None,
+            escalate_command: None,
+            deescalate_command: None,
+            escalate_prompt: None,
+            not_contains: vec![],
+        }
+    }
+
     /// Set the parent privilege level.
     pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
         self.previous_priv = Some(parent.into());
@@ -70,6 +86,12 @@ impl PrivilegeLevel {
     pub fn with_auth(mut self, prompt_pattern: &str) -> Result<Self, regex::Error> {
         self.escalate_prompt = Some(Regex::new(prompt_pattern)?);
         Ok(self)
+    }
+
+    /// Set authentication prompt from a pre-compiled regex.
+    pub fn with_auth_regex(mut self, pattern: Regex) -> Self {
+        self.escalate_prompt = Some(pattern);
+        self
     }
 
     /// Add a not_contains pattern.

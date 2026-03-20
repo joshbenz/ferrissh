@@ -76,6 +76,33 @@ pub struct SshConfig {
     /// individual commands wait for a prompt). Most users should leave this
     /// at `None` and rely on keepalive for connection health.
     pub inactivity_timeout: Option<Duration>,
+
+    /// SSH channel window size in bytes.
+    ///
+    /// Controls the SSH flow-control window — the maximum amount of
+    /// unacknowledged data the remote side can send before waiting for a
+    /// window adjustment. Larger values allow higher throughput but use
+    /// more memory per channel.
+    ///
+    /// Default: `None` (uses the russh default of 2 MiB).
+    pub window_size: Option<u32>,
+
+    /// Maximum SSH packet size in bytes.
+    ///
+    /// The maximum size of a single SSH data packet. Larger values reduce
+    /// framing overhead but increase per-packet memory.
+    ///
+    /// Default: `None` (uses the russh default of 32 KiB).
+    pub maximum_packet_size: Option<u32>,
+
+    /// Number of buffered messages per SSH channel (tokio mpsc capacity).
+    ///
+    /// Each message in the buffer causes tokio to allocate a `Block` of 32
+    /// slots. Lowering this from the russh default (100 → 4 blocks) to 32
+    /// (1 block) saves ~50 KB per channel for interactive CLI workloads.
+    ///
+    /// Default: `None` (uses the russh default of 100).
+    pub channel_buffer_size: Option<usize>,
 }
 
 impl SshConfig {
@@ -168,6 +195,9 @@ mod tests {
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_max: 3,
             inactivity_timeout: None,
+            window_size: None,
+            maximum_packet_size: None,
+            channel_buffer_size: None,
         };
         let debug_output = format!("{:?}", config);
         assert!(!debug_output.contains("secret_password"));

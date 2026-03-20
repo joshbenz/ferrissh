@@ -23,7 +23,7 @@ pub use generic::GenericDriver;
 // SessionState is defined in this module and re-exported here
 pub use interactive::{InteractiveBuilder, InteractiveEvent, InteractiveResult, InteractiveStep};
 pub use payload::Payload;
-pub use privilege::PrivilegeManager;
+pub use privilege::{PrivilegeLevelsBase, PrivilegeManager};
 pub use response::Response;
 pub use stream::{CommandStream, StreamCompletion};
 
