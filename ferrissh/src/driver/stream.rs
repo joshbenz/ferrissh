@@ -47,6 +47,7 @@ pub struct StreamCompletion {
 pub(crate) struct StreamConfig {
     pub prompt_patterns: Vec<Regex>,
     pub search_depth: usize,
+    pub prompt_after_newline: bool,
     pub timeout: Duration,
     pub normalize: bool,
     pub processor: Option<Box<dyn StreamProcessor>>,
@@ -77,6 +78,8 @@ pub struct CommandStream<'a> {
     failed_when_contains: Vec<String>,
     /// How many bytes from the end to hold back for prompt detection.
     search_depth: usize,
+    /// Only accept the reply prompt once the echo line has ended (platform setting).
+    prompt_after_newline: bool,
     /// Individual prompt patterns (avoids combined-NFA memory overhead).
     prompt_patterns: Vec<Regex>,
     /// Timeout for each read operation.
@@ -116,6 +119,7 @@ impl<'a> CommandStream<'a> {
             processor: config.processor,
             failed_when_contains: config.failed_when_contains,
             search_depth: config.search_depth,
+            prompt_after_newline: config.prompt_after_newline,
             prompt_patterns: config.prompt_patterns,
             timeout: config.timeout,
             start,
@@ -146,11 +150,11 @@ impl<'a> CommandStream<'a> {
                 Err(err) => {
                     let tail_start = self.holdback.len().saturating_sub(512);
                     warn!(
-                        "command stream {:?} failed ({}); {} unmatched bytes pending, tail: {:?}",
+                        "command stream {:?} failed ({}); {} unmatched bytes pending, tail: {}",
                         self.command,
                         err,
                         self.holdback.len(),
-                        String::from_utf8_lossy(&self.holdback[tail_start..])
+                        self.holdback[tail_start..].escape_ascii()
                     );
                     self.done = true;
                     self.channel.handle_error(&err);
@@ -174,12 +178,14 @@ impl<'a> CommandStream<'a> {
             }
 
             // 3. Check tail for prompt pattern (on un-normalized data).
-            //    Not before the first newline: until the echo line has ended,
-            //    a prompt-shaped tail is the device redrawing the input line
-            //    (`\rPROMPT# sh`, `\rPROMPT# sho`, ...), not the reply.
+            //    On `prompt_after_newline` platforms not before the first
+            //    newline: until the echo line has ended, a prompt-shaped tail
+            //    is the device redrawing the input line (`\rPROMPT# sh`,
+            //    `\rPROMPT# sho`, ... -- `PROMPT# shPROMPT# sho` once the `\r`
+            //    is stripped), not the reply.
             let tail_start = crate::channel::tail_start(&self.holdback, self.search_depth);
             let tail = &self.holdback[tail_start..];
-            let prompt_match = if self.first_chunk {
+            let prompt_match = if self.first_chunk && self.prompt_after_newline {
                 None
             } else {
                 self.prompt_patterns
@@ -294,7 +300,6 @@ impl<'a> CommandStream<'a> {
         self.completion.as_ref()
     }
 
-    /// Check whether the stream has finished.
     /// Bytes received but not yet emitted (still held back for prompt detection).
     ///
     /// After [`next_chunk()`](Self::next_chunk) returns an error (e.g. a
@@ -304,6 +309,7 @@ impl<'a> CommandStream<'a> {
         &self.holdback
     }
 
+    /// Check whether the stream has finished.
     pub fn is_done(&self) -> bool {
         self.done
     }

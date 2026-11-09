@@ -11,7 +11,9 @@
 //! - Commands like `config`, `commit`, `revert`, `validate`, `compare running-config`
 //! - Session settings `paginate false`, `screen-width`, `screen-length` (C-style;
 //!   the J-style `set cli screen-length` form is a syntax error on ArcOS 8.x and
-//!   leaves the `--More--` pager enabled)
+//!   leaves the `--More--` pager enabled). Completion-on-space is left at its
+//!   default: commands are sent whole, so it never triggers, and the C-style
+//!   form has not been verified on ArcOS.
 
 use std::sync::LazyLock;
 

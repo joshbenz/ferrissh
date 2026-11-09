@@ -20,8 +20,9 @@
 //! DCI-SPARE4.SV8.CORP.EQUINIX.COM$     # lower privilege class
 //! ```
 //!
-//! Every prompt is preceded by a bare `\r` (`\r\n\rdci16.sv8*# `), which the
-//! pattern tolerates. Errors are reported as `SHELL PARSER FAILURE: <reason>`.
+//! Every prompt is preceded by a bare `\r` (`\r\n\rdci16.sv8*# `); ANSI
+//! stripping removes it before prompt matching, so the patterns anchor on the
+//! line start. Errors are reported as `SHELL PARSER FAILURE: <reason>`.
 //!
 //! Long output is paged with `--More--` regardless of the PTY height, so the
 //! session pager is turned off on open (`system shell session set more off`
@@ -30,8 +31,9 @@
 //! Once prompt plus typed input is wider than its line editor (FQDN host names
 //! inside a deep sub-menu), WaveServer redraws the whole line on every
 //! keystroke (`\rPROMPT# q`, `\rPROMPT# qu`, ...); `session set window-width`
-//! does not stop it. The driver copes by only accepting a reply prompt after
-//! the newline that ends the command echo.
+//! does not stop it. With the `\r` stripped a packet can end in a bare copy of
+//! the old prompt, so the platform sets `prompt_after_newline`: a reply prompt
+//! is only accepted after the newline that ends the command echo.
 
 use std::sync::LazyLock;
 
@@ -43,9 +45,9 @@ use crate::platform::{PlatformDefinition, PrivilegeLevel};
 // super users, `$` (seen on spares, `DCI-SPARE4.SV8.CORP.EQUINIX.COM$`) or `>`
 // for lower classes.
 static EXEC_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)(?-u)^\r?[\w.\-]+\*?[#$>] ?$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-]+\*?[#$>] ?$").unwrap());
 static SUBMENU_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)(?-u)^\r?[\w.\-]+\*?\([\w.\-/ ]+\)[#$>] ?$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-]+\*?\([\w.\-/ ]+\)[#$>] ?$").unwrap());
 
 pub const PLATFORM_NAME: &str = "ciena_waveserver";
 
@@ -65,6 +67,7 @@ pub fn platform() -> PlatformDefinition {
         .with_failure_pattern("SHELL PARSER FAILURE")
         .with_on_open_command("system shell session set more off")
         .with_terminal_size(511, 200)
+        .with_prompt_after_newline(true)
 }
 
 #[cfg(test)]
@@ -77,6 +80,7 @@ mod tests {
         assert_eq!(p.name, "ciena_waveserver");
         assert_eq!(p.privilege_levels.len(), 2);
         assert_eq!(p.default_privilege, "exec");
+        assert!(p.prompt_after_newline);
     }
 
     #[test]
@@ -87,7 +91,8 @@ mod tests {
         assert!(exec.pattern.is_match(b"dci16.sv8*# "));
         assert!(exec.pattern.is_match(b"dci16.sv8# "));
         assert!(exec.pattern.is_match(b"dci16.sv8#"));
-        assert!(exec.pattern.is_match(b"\r\n\rdci16.sv8*# "));
+        // as seen after ANSI stripping (`\r\n\rdci16.sv8*# ` on the wire)
+        assert!(exec.pattern.is_match(b"\ndci16.sv8*# "));
         assert!(exec.pattern.is_match(b"Waveserver-5#"));
         assert!(exec.pattern.is_match(b"DCI-SPARE4.SV8.CORP.EQUINIX.COM$ "));
         assert!(exec.pattern.is_match(b"dci9.la1.corp.equinix.com# "));
@@ -105,7 +110,7 @@ mod tests {
         let sub = p.get_privilege("submenu").unwrap();
 
         assert!(sub.pattern.is_match(b"dci9.mi1(topology/show)# "));
-        assert!(sub.pattern.is_match(b"\r\n\rdci9.mi1*(topology/show)# "));
+        assert!(sub.pattern.is_match(b"\ndci9.mi1*(topology/show)# "));
         assert!(sub.pattern.is_match(b"dci9.mi1(xcvr)#"));
         assert!(!exec.pattern.is_match(b"dci9.mi1(topology/show)# "));
         assert!(!sub.pattern.is_match(b"dci9.mi1# "));

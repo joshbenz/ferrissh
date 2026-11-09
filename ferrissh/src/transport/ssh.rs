@@ -1,7 +1,8 @@
 //! SSH transport implementation using russh.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use log::{debug, warn};
 use russh::Channel;
@@ -18,8 +19,9 @@ use crate::error::{DisconnectReason, Result, TransportError};
 /// they are only negotiated when the server offers nothing better.
 ///
 /// Some network OSes (e.g. Ciena WaveServer) offer only `ecdh-sha2-nistp*`,
-/// which russh leaves out of its default list.
-fn preferred_algorithms() -> russh::Preferred {
+/// which russh leaves out of its default list. Built once and borrowed by
+/// every connection.
+static PREFERRED_KEX: LazyLock<Vec<russh::kex::Name>> = LazyLock::new(|| {
     let mut kex = russh::Preferred::DEFAULT.kex.to_vec();
     for name in [
         russh::kex::ECDH_SHA2_NISTP256,
@@ -30,8 +32,12 @@ fn preferred_algorithms() -> russh::Preferred {
             kex.push(name);
         }
     }
+    kex
+});
+
+fn preferred_algorithms() -> russh::Preferred {
     russh::Preferred {
-        kex: kex.into(),
+        kex: Cow::Borrowed(PREFERRED_KEX.as_slice()),
         ..russh::Preferred::DEFAULT
     }
 }

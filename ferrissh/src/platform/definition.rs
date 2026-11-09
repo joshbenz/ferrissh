@@ -38,6 +38,16 @@ pub struct PlatformDefinition {
     /// Terminal height for PTY.
     pub terminal_height: u32,
 
+    /// Only accept a command's reply prompt once a newline has been received.
+    ///
+    /// For CLIs that redraw the input line while echoing a command (Ciena
+    /// WaveServer once prompt plus input exceed its line editor width): a
+    /// packet ending in a bare copy of the old prompt would otherwise pass for
+    /// the reply. Leave this off (the default) for devices that may answer with
+    /// a bare prompt and no newline, e.g. with echo disabled; they would wait
+    /// out the timeout.
+    pub prompt_after_newline: bool,
+
     /// Optional vendor-specific behavior (not serializable).
     pub behavior: Option<Arc<dyn VendorBehavior>>,
 }
@@ -54,6 +64,7 @@ impl PlatformDefinition {
             on_close_commands: vec![],
             terminal_width: 511,
             terminal_height: 24,
+            prompt_after_newline: false,
             behavior: None,
         }
     }
@@ -95,6 +106,13 @@ impl PlatformDefinition {
         self
     }
 
+    /// Require a newline before a command's reply prompt
+    /// (see [`prompt_after_newline`](Self::prompt_after_newline)).
+    pub fn with_prompt_after_newline(mut self, required: bool) -> Self {
+        self.prompt_after_newline = required;
+        self
+    }
+
     /// Set vendor behavior.
     pub fn with_behavior(mut self, behavior: Arc<dyn VendorBehavior>) -> Self {
         self.behavior = Some(behavior);
@@ -118,6 +136,7 @@ impl fmt::Debug for PlatformDefinition {
             .field("on_close_commands", &self.on_close_commands)
             .field("terminal_width", &self.terminal_width)
             .field("terminal_height", &self.terminal_height)
+            .field("prompt_after_newline", &self.prompt_after_newline)
             .field(
                 "behavior",
                 &self.behavior.as_ref().map(|_| "<VendorBehavior>"),

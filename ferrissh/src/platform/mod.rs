@@ -29,6 +29,7 @@ pub use privilege_level::PrivilegeLevel;
 /// let custom = Platform::Custom(Box::new(PlatformDefinition::new("my_device")));
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Platform {
     /// Standard Linux/Unix shell.
     Linux,
@@ -38,8 +39,9 @@ pub enum Platform {
     AristaEos,
     /// Nokia SR OS (auto-detects MD-CLI vs Classic CLI).
     NokiaSros,
-    /// Arrcus ArcOS (ConfD J-style CLI).
+    /// Arrcus ArcOS (ConfD C-style CLI).
     ArrcusArcOs,
+    /// Ciena WaveServer (noun-verb CLI, no configuration mode).
     CienaWaveServer,
     /// User-provided platform definition.
     Custom(Box<PlatformDefinition>),

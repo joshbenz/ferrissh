@@ -54,17 +54,20 @@ static EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\n)?[\w\-@()/:\.]+>\s?$").unwrap());
 static CONFIG_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$").unwrap());
-// A shell prompt is a bare `%`/`$`, a single word (`user$`), or a line with
-// `user@host` in it (`user@router:RE:0% `, EVO `[vrf:none] user@host:~$ `).
-// Anything looser matches operational output such as
-// `deletions 0%, falsehits 0%, toolong 0%` from `show system virtual-memory`.
+// A shell prompt is a bare `%`/`$`, a single word (`user$`, `bash-4.2$`,
+// `-bash-4.2$`), or a line with `user@host` in it (`user@router:RE:0% `,
+// EVO `[vrf:none] user@host:~$ `). Anything looser matches operational output
+// such as `deletions 0%, falsehits 0%, toolong 0%` from
+// `show system virtual-memory`.
 static SHELL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^(?:[A-Za-z][\w\-.:~/]*|[^\n]*@[^\n]*)?[%$]\s?$").unwrap()
+    Regex::new(r"(?m)(?-u)^(?:[A-Za-z\-][\w\-.:~/]*|[^\n]*@[^\n]*)?[%$]\s?$").unwrap()
 });
 static ROOT_SHELL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*root@\S*[%#]\s?$").unwrap());
+// Junos prints `Password:`; the prompt follows the echoed `su` line, so it
+// must match at any line start, case-insensitively.
 static ROOT_SHELL_AUTH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?-u)^password:\s?$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?mi)(?-u)^password:\s?$").unwrap());
 
 /// Platform name for Juniper JUNOS.
 pub const PLATFORM_NAME: &str = "juniper_junos";
@@ -265,6 +268,11 @@ mod tests {
 
         // EVO bash prompt
         assert!(shell.pattern.is_match(b"[vrf:none] user@router:~$ "));
+
+        // bash with no user@host in PS1
+        assert!(shell.pattern.is_match(b"bash-4.2$ "));
+        assert!(shell.pattern.is_match(b"-bash-4.2$ "));
+        assert!(shell.pattern.is_match(b"sh-4.4$"));
 
         // Operational output that merely ends in % or $ is not a prompt
         assert!(
