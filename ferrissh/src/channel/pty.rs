@@ -110,6 +110,28 @@ impl PtyChannel {
         patterns: &[Regex],
         timeout: Duration,
     ) -> Result<BytesMut> {
+        self.read_until_prompt_inner(patterns, timeout, false).await
+    }
+
+    /// Read until the prompt that answers a command just sent.
+    ///
+    /// Like [`read_until_any_pattern`](Self::read_until_any_pattern), but a
+    /// match only counts once a newline has been received (the end of the
+    /// command echo); see [`PatternBuffer::search_tail_any_after_newline`].
+    pub async fn read_until_command_prompt(
+        &mut self,
+        patterns: &[Regex],
+        timeout: Duration,
+    ) -> Result<BytesMut> {
+        self.read_until_prompt_inner(patterns, timeout, true).await
+    }
+
+    async fn read_until_prompt_inner(
+        &mut self,
+        patterns: &[Regex],
+        timeout: Duration,
+        after_newline: bool,
+    ) -> Result<BytesMut> {
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
@@ -121,7 +143,12 @@ impl PtyChannel {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
                             self.buffer.extend(&data);
-                            if self.buffer.search_tail_any(patterns).is_some() {
+                            let matched = if after_newline {
+                                self.buffer.search_tail_any_after_newline(patterns).is_some()
+                            } else {
+                                self.buffer.search_tail_any(patterns).is_some()
+                            };
+                            if matched {
                                 trace!("prompt pattern matched after {} bytes", self.buffer.as_slice().len());
                                 return Ok(self.buffer.take());
                             }

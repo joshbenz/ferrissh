@@ -30,6 +30,7 @@ use regex::bytes::Regex;
 use super::channel::Channel;
 use crate::error::Result;
 use crate::platform::StreamProcessor;
+use log::warn;
 
 /// Metadata available after a [`CommandStream`] finishes (prompt detected).
 #[derive(Debug, Clone)]
@@ -143,6 +144,14 @@ impl<'a> CommandStream<'a> {
             let raw = match self.channel.pty().read_chunk(self.timeout).await {
                 Ok(chunk) => chunk,
                 Err(err) => {
+                    let tail_start = self.holdback.len().saturating_sub(512);
+                    warn!(
+                        "command stream {:?} failed ({}); {} unmatched bytes pending, tail: {:?}",
+                        self.command,
+                        err,
+                        self.holdback.len(),
+                        String::from_utf8_lossy(&self.holdback[tail_start..])
+                    );
                     self.done = true;
                     self.channel.handle_error(&err);
                     self.channel.mark_command_complete();
@@ -164,10 +173,19 @@ impl<'a> CommandStream<'a> {
                 self.first_chunk = false;
             }
 
-            // 3. Check tail for prompt pattern (on un-normalized data)
-            let tail_start = self.holdback.len().saturating_sub(self.search_depth);
+            // 3. Check tail for prompt pattern (on un-normalized data).
+            //    Not before the first newline: until the echo line has ended,
+            //    a prompt-shaped tail is the device redrawing the input line
+            //    (`\rPROMPT# sh`, `\rPROMPT# sho`, ...), not the reply.
+            let tail_start = crate::channel::tail_start(&self.holdback, self.search_depth);
             let tail = &self.holdback[tail_start..];
-            let prompt_match = self.prompt_patterns.iter().find_map(|p| p.find(tail));
+            let prompt_match = if self.first_chunk {
+                None
+            } else {
+                self.prompt_patterns
+                    .iter()
+                    .find_map(|p| crate::channel::find_trailing(p, tail))
+            };
             if let Some(m) = prompt_match {
                 // PROMPT FOUND — finalize
                 //
@@ -277,6 +295,15 @@ impl<'a> CommandStream<'a> {
     }
 
     /// Check whether the stream has finished.
+    /// Bytes received but not yet emitted (still held back for prompt detection).
+    ///
+    /// After [`next_chunk()`](Self::next_chunk) returns an error (e.g. a
+    /// pattern timeout) this holds whatever the device sent last -- usually
+    /// the prompt that the platform patterns failed to match.
+    pub fn pending(&self) -> &[u8] {
+        &self.holdback
+    }
+
     pub fn is_done(&self) -> bool {
         self.done
     }
@@ -332,13 +359,10 @@ impl<'a> CommandStream<'a> {
 /// Strip command echo from un-normalized data (handles `\r` before `\n`).
 fn strip_echo_streaming(buf: &mut BytesMut, command: &str) {
     if let Some(nl_pos) = memchr::memchr(b'\n', buf) {
-        let first_line = &buf[..nl_pos];
-        let trimmed = if first_line.last() == Some(&b'\r') {
-            &first_line[..first_line.len() - 1]
-        } else {
-            first_line
-        };
-        if trimmed == command.as_bytes() {
+        // trims `\r` and any trailing whitespace the device echoed after the
+        // command (Junos echoes `show version ` for `show version`)
+        let trimmed = buf[..nl_pos].trim_ascii_end();
+        if trimmed == command.as_bytes().trim_ascii_end() {
             let _ = buf.split_to(nl_pos + 1);
         }
     }
@@ -362,6 +386,13 @@ mod tests {
     #[test]
     fn test_strip_echo_streaming_crlf() {
         let mut buf = BytesMut::from("show version\r\noutput here");
+        strip_echo_streaming(&mut buf, "show version");
+        assert_eq!(&buf[..], b"output here");
+    }
+
+    #[test]
+    fn test_strip_echo_streaming_trailing_space() {
+        let mut buf = BytesMut::from("show version \noutput here");
         strip_echo_streaming(&mut buf, "show version");
         assert_eq!(&buf[..], b"output here");
     }

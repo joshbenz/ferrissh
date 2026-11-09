@@ -54,8 +54,13 @@ static EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\n)?[\w\-@()/:\.]+>\s?$").unwrap());
 static CONFIG_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^(?:\{[^}]+\}\[edit\]\n)?[\w\-@()/:\.]+#\s?$").unwrap());
-static SHELL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*[%$]\s?$").unwrap());
+// A shell prompt is a bare `%`/`$`, a single word (`user$`), or a line with
+// `user@host` in it (`user@router:RE:0% `, EVO `[vrf:none] user@host:~$ `).
+// Anything looser matches operational output such as
+// `deletions 0%, falsehits 0%, toolong 0%` from `show system virtual-memory`.
+static SHELL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?-u)^(?:[A-Za-z][\w\-.:~/]*|[^\n]*@[^\n]*)?[%$]\s?$").unwrap()
+});
 static ROOT_SHELL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[^\n]*root@\S*[%#]\s?$").unwrap());
 static ROOT_SHELL_AUTH: LazyLock<Regex> =
@@ -257,6 +262,18 @@ mod tests {
         // Bare "%" prompt (vJunos-router)
         assert!(shell.pattern.is_match(b"% "));
         assert!(shell.pattern.is_match(b"%"));
+
+        // EVO bash prompt
+        assert!(shell.pattern.is_match(b"[vrf:none] user@router:~$ "));
+
+        // Operational output that merely ends in % or $ is not a prompt
+        assert!(
+            !shell
+                .pattern
+                .is_match(b"deletions 0%, falsehits 0%, toolong 0%")
+        );
+        assert!(!shell.pattern.is_match(b"100%"));
+        assert!(!shell.pattern.is_match(b"  Utilization: 45%"));
 
         // Standard shell prompts (pattern matches, not_contains checked separately)
         assert!(shell.pattern.is_match(b"user@router% "));

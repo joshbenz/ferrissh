@@ -92,9 +92,9 @@ impl PatternBuffer {
     /// Returns the match if found, with byte offsets relative to the
     /// start of the search region (not the full buffer).
     pub fn search_tail(&self, pattern: &Regex) -> Option<regex::bytes::Match<'_>> {
-        let start = self.buffer.len().saturating_sub(self.search_depth);
+        let start = super::tail_start(&self.buffer, self.search_depth);
         let tail = &self.buffer[start..];
-        pattern.find(tail)
+        super::find_trailing(pattern, tail)
     }
 
     /// Search the tail for any of the given patterns (short-circuits on first match).
@@ -103,10 +103,10 @@ impl PatternBuffer {
     /// and cache-friendly, and prompt patterns are mutually exclusive so at
     /// most one will match.
     pub fn search_tail_any(&self, patterns: &[Regex]) -> Option<regex::bytes::Match<'_>> {
-        let start = self.buffer.len().saturating_sub(self.search_depth);
+        let start = super::tail_start(&self.buffer, self.search_depth);
         let tail = &self.buffer[start..];
         for pattern in patterns {
-            if let Some(m) = pattern.find(tail) {
+            if let Some(m) = super::find_trailing(pattern, tail) {
                 return Some(m);
             }
         }
@@ -116,6 +116,31 @@ impl PatternBuffer {
     /// Search the entire buffer for a pattern.
     ///
     /// Use sparingly - prefer `search_tail` for prompt detection.
+    /// Like [`search_tail_any`](Self::search_tail_any), but only accepts a match
+    /// that has a newline somewhere before it in the buffer.
+    ///
+    /// Used when waiting for the prompt that answers a command: the device
+    /// always ends the echoed command line with a newline before the new
+    /// prompt. Without this, a device that redraws the input line on each
+    /// keystroke (`\rPROMPT# q`, `\rPROMPT# qu`, ... as WaveServer does once
+    /// prompt plus input is wider than its line editor) can leave a bare copy
+    /// of the old prompt at the end of a packet, which then passes for the reply.
+    pub fn search_tail_any_after_newline(
+        &self,
+        patterns: &[Regex],
+    ) -> Option<regex::bytes::Match<'_>> {
+        let start = super::tail_start(&self.buffer, self.search_depth);
+        let tail = &self.buffer[start..];
+        for pattern in patterns {
+            if let Some(m) = super::find_trailing(pattern, tail)
+                && memchr::memchr(b'\n', &self.buffer[..start + m.start()]).is_some()
+            {
+                return Some(m);
+            }
+        }
+        None
+    }
+
     pub fn search_full(&self, pattern: &Regex) -> Option<regex::bytes::Match<'_>> {
         pattern.find(&self.buffer)
     }
@@ -303,5 +328,22 @@ mod tests {
         let s = buffer.as_str_lossy();
         assert!(s.contains("hello"));
         assert!(s.contains("world"));
+    }
+
+    #[test]
+    fn test_search_after_newline_ignores_redrawn_prompt() {
+        let re = Regex::new(r"(?m)(?-u)^[\w.\-]+\*?(?:\([\w.\-/ ]+\))?# ?$").unwrap();
+        let patterns = [re];
+        let mut buf = PatternBuffer::new(1000);
+        // WaveServer redraws the input line per keystroke ("\rPROMPT# q",
+        // "\rPROMPT# qu", ...). A packet holding only the start of a redraw
+        // leaves a bare copy of the old prompt as the whole buffer.
+        buf.extend(b"\rhost.example.com(topology/show)# ");
+        assert!(buf.search_tail_any(&patterns).is_some());
+        assert!(buf.search_tail_any_after_newline(&patterns).is_none());
+        // the rest of the echo arrives, then the real reply prompt
+        buf.extend(b"q\rhost.example.com(topology/show)# quit\r\n\rhost.example.com# ");
+        let m = buf.search_tail_any_after_newline(&patterns).unwrap();
+        assert_eq!(m.as_bytes(), b"host.example.com# ");
     }
 }

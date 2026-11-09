@@ -14,6 +14,28 @@ use secrecy::ExposeSecret;
 use super::config::{AuthMethod, HostKeyVerification, SshConfig};
 use crate::error::{DisconnectReason, Result, TransportError};
 
+/// russh's safe defaults plus the NIST ECDH key exchanges, appended last so
+/// they are only negotiated when the server offers nothing better.
+///
+/// Some network OSes (e.g. Ciena WaveServer) offer only `ecdh-sha2-nistp*`,
+/// which russh leaves out of its default list.
+fn preferred_algorithms() -> russh::Preferred {
+    let mut kex = russh::Preferred::DEFAULT.kex.to_vec();
+    for name in [
+        russh::kex::ECDH_SHA2_NISTP256,
+        russh::kex::ECDH_SHA2_NISTP384,
+        russh::kex::ECDH_SHA2_NISTP521,
+    ] {
+        if !kex.contains(&name) {
+            kex.push(name);
+        }
+    }
+    russh::Preferred {
+        kex: kex.into(),
+        ..russh::Preferred::DEFAULT
+    }
+}
+
 /// SSH transport wrapping russh client.
 pub struct SshTransport {
     /// The russh session handle.
@@ -38,6 +60,7 @@ impl SshTransport {
             inactivity_timeout: config.inactivity_timeout,
             keepalive_interval: config.keepalive_interval,
             keepalive_max: config.keepalive_max,
+            preferred: preferred_algorithms(),
             ..Default::default()
         };
         if let Some(v) = config.window_size {

@@ -40,6 +40,7 @@ pub enum Platform {
     NokiaSros,
     /// Arrcus ArcOS (ConfD J-style CLI).
     ArrcusArcOs,
+    CienaWaveServer,
     /// User-provided platform definition.
     Custom(Box<PlatformDefinition>),
 }
@@ -52,6 +53,7 @@ impl From<Platform> for PlatformDefinition {
             Platform::AristaEos => vendors::arista::platform(),
             Platform::NokiaSros => vendors::nokia_sros::platform(),
             Platform::ArrcusArcOs => vendors::arrcus_arcos::platform(),
+            Platform::CienaWaveServer => vendors::ciena_waveserver::platform(),
             Platform::Custom(def) => *def,
         }
     }

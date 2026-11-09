@@ -9,4 +9,5 @@ mod pty;
 
 pub use buffer::PatternBuffer;
 pub use patterns::PromptMatcher;
+pub(crate) use patterns::{find_trailing, tail_start};
 pub use pty::{PtyChannel, PtyConfig};
