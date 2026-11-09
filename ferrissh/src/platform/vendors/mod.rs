@@ -2,6 +2,7 @@
 
 pub mod arista;
 pub mod arrcus_arcos;
+pub mod ciena_waveserver;
 pub mod juniper;
 pub mod linux;
 pub mod nokia_sros;

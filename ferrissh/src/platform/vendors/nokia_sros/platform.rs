@@ -67,14 +67,14 @@ use regex::bytes::Regex;
 use crate::platform::{PlatformDefinition, PrivilegeLevel, VendorBehavior};
 
 static EXEC_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+    Regex::new(r"(?m)(?-u)^!?\*?\[.*\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
 });
 static CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$")
+    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof|gl|pr|ro)\)\[/?\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$")
         .unwrap()
 });
 static CONFIG_WITH_PATH_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof)\)\[(?:\S|[ \t]){2,}\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
+    Regex::new(r"(?m)(?-u)^!?\*?\((?:ex|ex:bof|gl|pr|ro)\)\[(?:\S|[ \t]){2,}\]\r?\n\*?[a-dA-D]:[\w._-]+@[\w \t_.-]+#\s?$").unwrap()
 });
 static CLASSIC_EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^\*?[a-dA-D]:[\w \t_.-]+#\s?$").unwrap());
@@ -223,8 +223,17 @@ mod tests {
                 .is_match(b"[/show router interface]\nA:admin@node-2#")
         );
 
+        // With uncommitted changes indicator (* before [)
+        assert!(exec.pattern.is_match(b"*[/]\nA:admin@router#"));
+        assert!(exec.pattern.is_match(b"*[gl:/configure]\nA:admin@router#"));
+
+        // With outdated baseline indicator (! before [)
+        assert!(exec.pattern.is_match(b"![/]\nA:admin@router#"));
+        assert!(exec.pattern.is_match(b"!*[/]\nA:admin@router#"));
+
         // matches() filters out config mode via not_contains
         assert!(exec.matches("[/]\nA:admin@router#"));
+        assert!(exec.matches("*[gl:/configure]\nA:svc-github-neo@use11.sv5#"));
         assert!(exec.matches("[/]\r\nA:svc-github-neo@use1.lm1#"));
         assert!(!exec.matches("(ex)[/]\nA:admin@router#"));
         assert!(!exec.matches("(ro)[/]\nA:admin@router#"));
@@ -258,6 +267,17 @@ mod tests {
 
         // BOF config
         assert!(config.pattern.is_match(b"(ex:bof)[/]\nA:admin@router#"));
+
+        // Global config
+        assert!(config.pattern.is_match(b"(gl)[/]\nA:admin@router#"));
+        assert!(config.pattern.is_match(b"*(gl)[/]\nA:admin@router#"));
+
+        // Private config
+        assert!(config.pattern.is_match(b"(pr)[/]\nA:admin@router#"));
+        assert!(config.pattern.is_match(b"*(pr)[/]\nA:admin@router#"));
+
+        // Read-only config
+        assert!(config.pattern.is_match(b"(ro)[/]\nA:admin@router#"));
 
         // Different CPM slots
         assert!(config.pattern.is_match(b"(ex)[/]\nB:admin@router#"));
@@ -322,6 +342,32 @@ mod tests {
             config_path
                 .pattern
                 .is_match(b"(ex:bof)[/configure system]\nA:admin@router#")
+        );
+
+        // Global config with path (e.g. "configure global" enters this)
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(gl)[/configure]\nA:admin@router#")
+        );
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"*(gl)[/configure]\nA:admin@router#")
+        );
+
+        // Private config with path
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(pr)[/configure]\nA:admin@router#")
+        );
+
+        // Read-only config with path
+        assert!(
+            config_path
+                .pattern
+                .is_match(b"(ro)[/configure]\nA:admin@router#")
         );
 
         // Should NOT match root-level config (that's the configuration level)

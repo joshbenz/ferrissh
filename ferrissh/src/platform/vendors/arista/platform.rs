@@ -36,8 +36,9 @@ static EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+>\s?$").unwrap());
 static PRIV_EXEC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+#\s?$").unwrap());
+// EOS prints `Password:` after the echoed `enable` line.
 static PRIV_EXEC_AUTH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?-u)^password:\s?$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?mi)(?-u)^password:\s?$").unwrap());
 static CONFIG_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?-u)^[\w.\-@()/: ]+\(config[\w.\-@/:+]*\)#\s?$").unwrap());
 

@@ -25,6 +25,11 @@ pub struct PatternBuffer {
     /// Default is 1000 bytes.
     search_depth: usize,
 
+    /// Offset of the first `\n` in `buffer`, tracked as data arrives so
+    /// [`search_tail_any_after_newline`](Self::search_tail_any_after_newline)
+    /// never has to rescan the buffer.
+    first_newline: Option<usize>,
+
     /// Reusable VTE parser for ANSI escape stripping.
     parser: Parser,
 }
@@ -69,6 +74,7 @@ impl PatternBuffer {
         Self {
             buffer: BytesMut::with_capacity(4096),
             search_depth,
+            first_newline: None,
             parser: Parser::new(),
         }
     }
@@ -76,37 +82,81 @@ impl PatternBuffer {
     /// Extend the buffer with new data, stripping ANSI escape codes.
     ///
     /// The VTE parser is reused across calls, so escape sequences that
-    /// span multiple SSH data messages are handled correctly.
+    /// span multiple SSH data messages are handled correctly. Only `\n`
+    /// survives of the control characters: `\r` never reaches the buffer.
     pub fn extend(&mut self, data: &[u8]) {
+        let before = self.buffer.len();
         let mut stripper = AnsiStripper {
             out: &mut self.buffer,
         };
         self.parser.advance(&mut stripper, data);
+        if self.first_newline.is_none() {
+            self.first_newline = memchr::memchr(b'\n', &self.buffer[before..]).map(|i| before + i);
+        }
     }
 
     /// Search only the tail of the buffer for the pattern.
     ///
     /// This is the key optimization from scrapli - we only search the
-    /// last `search_depth` bytes, not the entire buffer.
+    /// last `search_depth` bytes, not the entire buffer. The window is
+    /// aligned to a line start so `^` cannot match a line fragment.
+    ///
+    /// The match may be followed by further output: this is for arbitrary
+    /// expect patterns (`Password:`, `[confirm]`) that are not necessarily
+    /// the last thing on the line. Prompt detection uses
+    /// [`search_tail_any`](Self::search_tail_any), which requires the match
+    /// to end the buffer.
     ///
     /// Returns the match if found, with byte offsets relative to the
     /// start of the search region (not the full buffer).
     pub fn search_tail(&self, pattern: &Regex) -> Option<regex::bytes::Match<'_>> {
-        let start = self.buffer.len().saturating_sub(self.search_depth);
+        let start = super::tail_start(&self.buffer, self.search_depth);
         let tail = &self.buffer[start..];
         pattern.find(tail)
     }
 
-    /// Search the tail for any of the given patterns (short-circuits on first match).
+    /// Search the tail for any of the given prompt patterns (short-circuits on
+    /// first match). A match only counts if nothing but whitespace follows it.
     ///
     /// Avoids the need for a combined mega-regex — each pattern's NFA is small
     /// and cache-friendly, and prompt patterns are mutually exclusive so at
     /// most one will match.
     pub fn search_tail_any(&self, patterns: &[Regex]) -> Option<regex::bytes::Match<'_>> {
-        let start = self.buffer.len().saturating_sub(self.search_depth);
+        let start = super::tail_start(&self.buffer, self.search_depth);
         let tail = &self.buffer[start..];
         for pattern in patterns {
-            if let Some(m) = pattern.find(tail) {
+            if let Some(m) = super::find_trailing(pattern, tail) {
+                return Some(m);
+            }
+        }
+        None
+    }
+
+    /// Like [`search_tail_any`](Self::search_tail_any), but only accepts a match
+    /// that has a newline somewhere before it in the buffer.
+    ///
+    /// Used when waiting for the prompt that answers a command on a platform
+    /// with `prompt_after_newline` set: the device ends the echoed command
+    /// line with a newline before the new prompt. Without this, a device that
+    /// redraws the input line on each keystroke (`\rPROMPT# q`, `\rPROMPT# qu`,
+    /// ... as WaveServer does once prompt plus input is wider than its line
+    /// editor; the `\r` is stripped, so the buffer reads `PROMPT# qPROMPT# qu`)
+    /// can leave a bare copy of the old prompt at the end of a packet, which
+    /// then passes for the reply.
+    ///
+    /// The newline position is tracked in [`extend`](Self::extend), so this
+    /// costs no more than `search_tail_any`.
+    pub fn search_tail_any_after_newline(
+        &self,
+        patterns: &[Regex],
+    ) -> Option<regex::bytes::Match<'_>> {
+        let nl = self.first_newline?;
+        let start = super::tail_start(&self.buffer, self.search_depth);
+        let tail = &self.buffer[start..];
+        for pattern in patterns {
+            if let Some(m) = super::find_trailing(pattern, tail)
+                && nl < start + m.start()
+            {
                 return Some(m);
             }
         }
@@ -127,6 +177,7 @@ impl PatternBuffer {
 
     /// Take ownership of the buffer contents and reset.
     pub fn take(&mut self) -> BytesMut {
+        self.first_newline = None;
         std::mem::take(&mut self.buffer)
     }
 
@@ -152,6 +203,7 @@ impl PatternBuffer {
 
     /// Clear the buffer.
     pub fn clear(&mut self) {
+        self.first_newline = None;
         self.buffer.clear();
     }
 
@@ -303,5 +355,86 @@ mod tests {
         let s = buffer.as_str_lossy();
         assert!(s.contains("hello"));
         assert!(s.contains("world"));
+    }
+
+    #[test]
+    fn test_search_after_newline_ignores_redrawn_prompt() {
+        let re = Regex::new(r"(?m)(?-u)^[\w.\-]+\*?(?:\([\w.\-/ ]+\))?# ?$").unwrap();
+        let patterns = [re];
+        let mut buf = PatternBuffer::new(1000);
+        // WaveServer redraws the input line per keystroke ("\rPROMPT# q",
+        // "\rPROMPT# qu", ...). A packet holding only the start of a redraw
+        // leaves a bare copy of the old prompt as the whole buffer.
+        buf.extend(b"\rhost.example.com(topology/show)# ");
+        assert_eq!(buf.as_slice(), b"host.example.com(topology/show)# ");
+        assert!(buf.search_tail_any(&patterns).is_some());
+        assert!(buf.search_tail_any_after_newline(&patterns).is_none());
+        // the rest of the echo arrives, then the real reply prompt
+        buf.extend(b"q\rhost.example.com(topology/show)# quit\r\n\rhost.example.com# ");
+        let m = buf.search_tail_any_after_newline(&patterns).unwrap();
+        assert_eq!(m.as_bytes(), b"host.example.com# ");
+    }
+
+    #[test]
+    fn test_search_after_newline_ignores_newline_inside_prompt() {
+        // Nokia's two-line prompt carries its own newline; that one does not
+        // count as "the echo line has ended".
+        let re = Regex::new(r"(?m)(?-u)^\[.*\]\n[A-D]:[\w.@-]+#\s?$").unwrap();
+        let patterns = [re];
+        let mut buf = PatternBuffer::new(1000);
+        buf.extend(b"[/]\nA:admin@router# ");
+        assert!(buf.search_tail_any(&patterns).is_some());
+        assert!(buf.search_tail_any_after_newline(&patterns).is_none());
+        buf.clear();
+        buf.extend(b"show version\n[/]\nA:admin@router# ");
+        assert!(buf.search_tail_any_after_newline(&patterns).is_some());
+    }
+
+    #[test]
+    fn test_first_newline_resets_with_buffer() {
+        let re = Regex::new(r"(?m)(?-u)^\w+#\s?$").unwrap();
+        let patterns = [re];
+        let mut buf = PatternBuffer::new(1000);
+        buf.extend(b"stale output\nhost# ");
+        assert!(buf.search_tail_any_after_newline(&patterns).is_some());
+        buf.take();
+        buf.extend(b"host# ");
+        assert!(buf.search_tail_any_after_newline(&patterns).is_none());
+        buf.clear();
+        buf.extend(b"host# ");
+        assert!(buf.search_tail_any_after_newline(&patterns).is_none());
+    }
+
+    #[test]
+    fn test_search_tail_matches_expect_pattern_mid_line() {
+        // Interactive / auth patterns need not end the buffer.
+        let mut buf = PatternBuffer::new(1000);
+        buf.extend(b"start shell user root\nPassword: ");
+        assert!(buf.search_tail(&Regex::new(r"Password").unwrap()).is_some());
+        assert!(
+            buf.search_tail(&Regex::new(r"(?mi)(?-u)^password:\s?$").unwrap())
+                .is_some()
+        );
+        buf.clear();
+        buf.extend(b"Proceed with reload? [confirm] ");
+        assert!(buf.search_tail(&Regex::new(r"confirm").unwrap()).is_some());
+    }
+
+    #[test]
+    fn test_search_tail_any_requires_prompt_at_end() {
+        let re = Regex::new(r"(?m)(?-u)^\w+#\s?$").unwrap();
+        let patterns = [re];
+        let mut buf = PatternBuffer::new(1000);
+        buf.extend(b"host#\nmore output\n");
+        assert!(buf.search_tail_any(&patterns).is_none());
+        buf.extend(b"host# ");
+        assert!(buf.search_tail_any(&patterns).is_some());
+    }
+
+    #[test]
+    fn test_carriage_return_is_stripped() {
+        let mut buf = PatternBuffer::new(1000);
+        buf.extend(b"\r\n\rhost# q\rhost# qu\r\n");
+        assert_eq!(buf.as_slice(), b"\nhost# qhost# qu\n");
     }
 }

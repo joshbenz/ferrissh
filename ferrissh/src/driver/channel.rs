@@ -115,7 +115,7 @@ impl Channel {
     /// and executes on_open commands.
     pub(crate) async fn initialize(&mut self) -> Result<()> {
         // Wait for initial prompt
-        let (_data, prompt) = self.read_until_prompt().await?;
+        let (_data, prompt) = self.read_until_prompt(false).await?;
 
         // Determine initial privilege level
         if let Ok(level) = self.privilege_manager.determine_from_prompt(&prompt) {
@@ -130,7 +130,21 @@ impl Channel {
             debug!("executing {} on-open commands", on_open.len());
         }
         for cmd in &on_open {
-            self.send_command(cmd).await?;
+            let response = self.send_command(cmd).await?;
+            if let Some(pattern) = &response.failure_message {
+                // On-open commands are best effort (some target only one CLI
+                // engine), but a rejected paging/width command leaves the
+                // session in a state that hangs later commands -- say so.
+                // Log the first three lines without allocating.
+                let result = response.result.as_str();
+                let shown: usize = result.split_inclusive('\n').take(3).map(str::len).sum();
+                warn!(
+                    "on-open command {:?} was rejected (matched {:?}): {:?}",
+                    cmd,
+                    pattern,
+                    &result[..shown]
+                );
+            }
         }
 
         Ok(())
@@ -155,14 +169,20 @@ impl Channel {
         }
 
         // Wait for prompt
-        let read_result = self
-            .pty
-            .read_until_any_pattern(&self.prompt_patterns, self.timeout)
-            .await;
+        let read_result = self.read_reply_prompt().await;
 
         let mut data = match read_result {
             Ok(data) => data,
             Err(e) => {
+                let pending = self.pty.peek_buffer();
+                let tail_start = pending.len().saturating_sub(512);
+                warn!(
+                    "send_command {:?} failed ({}); {} unmatched bytes pending, tail: {}",
+                    command,
+                    e,
+                    pending.len(),
+                    pending[tail_start..].escape_ascii()
+                );
                 if Self::is_connection_error(&e) {
                     self.handle_disconnect(DisconnectReason::TransportError(e.to_string()));
                 }
@@ -252,6 +272,7 @@ impl Channel {
         let config = StreamConfig {
             prompt_patterns: self.prompt_patterns.clone(),
             search_depth: self.pty.search_depth(),
+            prompt_after_newline: self.session.platform().prompt_after_newline,
             timeout: self.timeout,
             normalize: self.normalize,
             processor: self
@@ -343,7 +364,7 @@ impl Channel {
             }
 
             // Wait for new prompt
-            let prompt_result = self.read_until_prompt().await;
+            let prompt_result = self.read_until_prompt(true).await;
             let (_, prompt) = match prompt_result {
                 Ok(r) => r,
                 Err(e) => {
@@ -613,7 +634,7 @@ impl Channel {
             // Best-effort wait for prompt
             if let Err(e) = self
                 .pty
-                .read_until_any_pattern(&self.prompt_patterns, self.timeout)
+                .read_until_command_prompt(&self.prompt_patterns, self.timeout)
                 .await
             {
                 warn!("on_close command {:?} failed to complete: {}", cmd, e);
@@ -629,6 +650,17 @@ impl Channel {
     // =========================================================================
     // Internal methods
     // =========================================================================
+
+    /// Bytes received from the device that have not been consumed by a
+    /// completed command.
+    ///
+    /// After [`send_command()`](Self::send_command) fails with a pattern
+    /// timeout this holds the device's last output -- usually the prompt that
+    /// the platform patterns failed to match. Useful for diagnosing prompt
+    /// regexes. The bytes are discarded when the next command is sent.
+    pub fn pending_output(&self) -> &[u8] {
+        self.pty.peek_buffer()
+    }
 
     /// Get a mutable reference to the PTY channel.
     ///
@@ -698,11 +730,10 @@ impl Channel {
 
     /// Extract the prompt string from the tail of a raw byte buffer.
     fn extract_prompt(&self, data: &[u8]) -> String {
-        let search_depth = self.pty.search_depth();
-        let tail_start = data.len().saturating_sub(search_depth);
+        let tail_start = crate::channel::tail_start(data, self.pty.search_depth());
         let tail = &data[tail_start..];
         for pattern in &self.prompt_patterns {
-            if let Some(m) = pattern.find(tail) {
+            if let Some(m) = crate::channel::find_trailing(pattern, tail) {
                 let matched = String::from_utf8_lossy(&tail[m.start()..])
                     .trim()
                     .to_string();
@@ -714,12 +745,50 @@ impl Channel {
         String::new()
     }
 
-    /// Read until the prompt is matched, then determine current privilege.
-    async fn read_until_prompt(&mut self) -> Result<(BytesMut, String)> {
-        let data = self
-            .pty
-            .read_until_any_pattern(&self.prompt_patterns, self.timeout)
-            .await?;
+    /// Read until the prompt that answers a command just sent.
+    ///
+    /// On platforms with `prompt_after_newline` set the prompt must follow
+    /// the newline that ends the command echo (see
+    /// [`PlatformDefinition::prompt_after_newline`](crate::PlatformDefinition::prompt_after_newline)).
+    async fn read_reply_prompt(&mut self) -> Result<BytesMut> {
+        if self.session.platform().prompt_after_newline {
+            self.pty
+                .read_until_command_prompt(&self.prompt_patterns, self.timeout)
+                .await
+        } else {
+            self.pty
+                .read_until_any_pattern(&self.prompt_patterns, self.timeout)
+                .await
+        }
+    }
+
+    /// Read until the prompt is matched, then extract it.
+    ///
+    /// `after_command` is true when the prompt answers a command just sent
+    /// (see [`read_reply_prompt`](Self::read_reply_prompt)); false for the
+    /// initial prompt after login.
+    async fn read_until_prompt(&mut self, after_command: bool) -> Result<(BytesMut, String)> {
+        let read = if after_command {
+            self.read_reply_prompt().await
+        } else {
+            self.pty
+                .read_until_any_pattern(&self.prompt_patterns, self.timeout)
+                .await
+        };
+        let data = match read {
+            Ok(data) => data,
+            Err(e) => {
+                let pending = self.pty.peek_buffer();
+                let tail_start = pending.len().saturating_sub(512);
+                warn!(
+                    "waiting for prompt failed ({}); {} unmatched bytes pending, tail: {}",
+                    e,
+                    pending.len(),
+                    pending[tail_start..].escape_ascii()
+                );
+                return Err(e);
+            }
+        };
 
         let prompt = self.extract_prompt(&data);
 
@@ -862,14 +931,17 @@ pub(crate) fn strip_echo_in_place(buf: &mut BytesMut, command: &str) {
         return;
     }
 
+    // Devices may echo trailing whitespace after the command (Junos echoes
+    // `show version ` for `show version`), so compare with it trimmed.
+    let command = command.as_bytes().trim_ascii_end();
     if let Some(nl_pos) = memchr::memchr(b'\n', buf) {
         // Check if the first line equals the command
-        if &buf[..nl_pos] == command.as_bytes() {
+        if buf[..nl_pos].trim_ascii_end() == command {
             let _ = buf.split_to(nl_pos + 1);
         }
     } else {
         // No newline — entire buffer is one "line"
-        if &buf[..] == command.as_bytes() {
+        if buf[..].trim_ascii_end() == command {
             buf.clear();
         }
     }
@@ -1083,6 +1155,18 @@ mod tests {
         let mut buf = BytesMut::from("show version\noutput\nprompt");
         strip_echo_in_place(&mut buf, "show");
         assert_eq!(&buf[..], b"show version\noutput\nprompt");
+    }
+
+    #[test]
+    fn test_strip_echo_trailing_space_in_echo() {
+        // Junos echoes `show version ` for `show version`
+        let mut buf = BytesMut::from(&b"show version \noutput\n"[..]);
+        strip_echo_in_place(&mut buf, "show version");
+        assert_eq!(&buf[..], b"output\n");
+
+        let mut buf = BytesMut::from(&b"show version \t"[..]);
+        strip_echo_in_place(&mut buf, "show version");
+        assert!(buf.is_empty());
     }
 
     #[test]

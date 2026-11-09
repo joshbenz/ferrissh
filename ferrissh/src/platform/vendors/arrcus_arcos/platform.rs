@@ -9,7 +9,11 @@
 //! - `user@host(config)#` config prompt
 //! - Candidate configuration model (commit/rollback/validate/diff)
 //! - Commands like `config`, `commit`, `revert`, `validate`, `compare running-config`
-//! - Terminal settings like `set cli screen-width`, `set cli screen-length`
+//! - Session settings `paginate false`, `screen-width`, `screen-length` (C-style;
+//!   the J-style `set cli screen-length` form is a syntax error on ArcOS 8.x and
+//!   leaves the `--More--` pager enabled). Completion-on-space is left at its
+//!   default: commands are sent whole, so it never triggers, and the C-style
+//!   form has not been verified on ArcOS.
 
 use std::sync::LazyLock;
 
@@ -45,9 +49,9 @@ pub fn platform() -> PlatformDefinition {
         .with_failure_pattern("No valid completions")
         .with_failure_pattern("unknown command")
         .with_failure_pattern("syntax error")
-        .with_on_open_command("set cli screen-width 511")
-        .with_on_open_command("set cli screen-length 0")
-        .with_on_open_command("set cli complete-on-space off")
+        .with_on_open_command("paginate false")
+        .with_on_open_command("screen-width 511")
+        .with_on_open_command("screen-length 0")
 }
 
 #[cfg(test)]
@@ -143,18 +147,9 @@ mod tests {
     #[test]
     fn test_on_open_commands() {
         let p = platform();
-        assert_eq!(p.on_open_commands.len(), 3);
-        assert!(
-            p.on_open_commands
-                .contains(&"set cli screen-width 511".to_string())
-        );
-        assert!(
-            p.on_open_commands
-                .contains(&"set cli screen-length 0".to_string())
-        );
-        assert!(
-            p.on_open_commands
-                .contains(&"set cli complete-on-space off".to_string())
+        assert_eq!(
+            p.on_open_commands,
+            vec!["paginate false", "screen-width 511", "screen-length 0"]
         );
     }
 }

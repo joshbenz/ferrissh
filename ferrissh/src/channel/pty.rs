@@ -8,7 +8,7 @@ use russh::Channel;
 use russh::ChannelMsg;
 use russh::client::Msg;
 
-use log::trace;
+use log::{debug, trace};
 
 use super::buffer::PatternBuffer;
 use crate::error::{ChannelError, Result};
@@ -54,7 +54,18 @@ impl PtyChannel {
     }
 
     /// Send a command (with newline).
+    ///
+    /// Bytes still in the buffer at this point were received before the
+    /// command and cannot be part of its reply: late output of a command
+    /// that timed out, or unsolicited messages. They are discarded so they
+    /// neither get prepended to this reply nor satisfy the newline check in
+    /// [`read_until_command_prompt`](Self::read_until_command_prompt).
     pub async fn send(&mut self, command: &str) -> Result<()> {
+        let stale = self.buffer.len();
+        if stale > 0 {
+            debug!("discarding {stale} unconsumed bytes received before send");
+            self.buffer.clear();
+        }
         let mut data = Vec::with_capacity(command.len() + 1);
         data.extend_from_slice(command.as_bytes());
         data.push(b'\n');
@@ -63,6 +74,9 @@ impl PtyChannel {
     }
 
     /// Read until pattern matches (with timeout).
+    ///
+    /// For expect patterns (auth prompts, interactive steps): the match may
+    /// be followed by further text on the line, unlike the prompt readers.
     pub async fn read_until_pattern(
         &mut self,
         pattern: &Regex,
@@ -110,6 +124,30 @@ impl PtyChannel {
         patterns: &[Regex],
         timeout: Duration,
     ) -> Result<BytesMut> {
+        self.read_until_prompt_inner(patterns, timeout, false).await
+    }
+
+    /// Read until the prompt that answers a command just sent.
+    ///
+    /// Like [`read_until_any_pattern`](Self::read_until_any_pattern), but a
+    /// match only counts once a newline has been received (the end of the
+    /// command echo); see [`PatternBuffer::search_tail_any_after_newline`].
+    /// Only for platforms with `prompt_after_newline` set: a device that
+    /// answers with a bare prompt and no newline would otherwise time out.
+    pub async fn read_until_command_prompt(
+        &mut self,
+        patterns: &[Regex],
+        timeout: Duration,
+    ) -> Result<BytesMut> {
+        self.read_until_prompt_inner(patterns, timeout, true).await
+    }
+
+    async fn read_until_prompt_inner(
+        &mut self,
+        patterns: &[Regex],
+        timeout: Duration,
+        after_newline: bool,
+    ) -> Result<BytesMut> {
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
@@ -121,7 +159,12 @@ impl PtyChannel {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
                             self.buffer.extend(&data);
-                            if self.buffer.search_tail_any(patterns).is_some() {
+                            let matched = if after_newline {
+                                self.buffer.search_tail_any_after_newline(patterns).is_some()
+                            } else {
+                                self.buffer.search_tail_any(patterns).is_some()
+                            };
+                            if matched {
                                 trace!("prompt pattern matched after {} bytes", self.buffer.as_slice().len());
                                 return Ok(self.buffer.take());
                             }
